@@ -1,0 +1,233 @@
+{
+  "schemaVersion": 2,
+  "note": "Honest, sourced catalog. kind=action (FrameForge applies+reverts it), verify (read-only health check, never an 'action'), advise (BIOS/manual/in-game — we guide, we don't fake it). Every action records prior state before changing so revert is exact.",
+  "tweaks": [
+    {
+      "id": "disable-gamedvr",
+      "name": "Disable Game DVR background recording",
+      "category": "windows", "kind": "action",
+      "tier": "safe", "impact": "medium", "risk": "low",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Turns off the Xbox Game Bar background recorder.",
+      "details": "Game DVR continuously buffers gameplay so you can 'record that'. That capture costs GPU encoder time and CPU and is one of the most reliably measurable FPS/stutter wins when turned off.",
+      "evidence": "Reproduced in many before/after captures; the background DVR thread competes for the GPU encoder.",
+      "sources": ["https://learn.microsoft.com/gaming/game-bar/"],
+      "op": { "type": "multi", "ops": [
+        { "type": "registry", "root": "HKCU", "path": "System\\GameConfigStore", "name": "GameDVR_Enabled", "valueType": "DWord", "value": 0 },
+        { "type": "registry", "root": "HKCU", "path": "Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR", "name": "AppCaptureEnabled", "valueType": "DWord", "value": 0 }
+      ]}
+    },
+    {
+      "id": "game-mode-on",
+      "name": "Windows Game Mode",
+      "category": "windows", "kind": "action",
+      "tier": "safe", "impact": "low", "risk": "none",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Ensures Game Mode is on so Windows defers background work while you play.",
+      "details": "Game Mode suppresses background interruptions (driver installs, defrag, Update installs) during a game, reducing stutter from background CPU spikes. Low but free.",
+      "evidence": "Microsoft-documented behavior prioritizing the active game.",
+      "sources": ["https://support.microsoft.com/windows/game-mode-in-windows-a5a4c0c4-2d80-4d11-9ee0-799f6d80c7d8"],
+      "op": { "type": "multi", "ops": [
+        { "type": "registry", "root": "HKCU", "path": "Software\\Microsoft\\GameBar", "name": "AutoGameModeEnabled", "valueType": "DWord", "value": 1 },
+        { "type": "registry", "root": "HKCU", "path": "Software\\Microsoft\\GameBar", "name": "AllowAutoGameMode", "valueType": "DWord", "value": 1 }
+      ]}
+    },
+    {
+      "id": "power-plan-performance",
+      "name": "Performance power plan (no min-state pin)",
+      "category": "power", "kind": "action",
+      "tier": "balanced", "impact": "low", "risk": "low",
+      "requiresAdmin": true, "requiresReboot": false,
+      "summary": "Activates Ultimate Performance but explicitly UN-pins minimum processor state.",
+      "details": "Removes CPU core parking and idle-demotion latency for steadier frametimes. Crucially, FrameForge sets minimum processor state to 5% (NOT 100%) — on a 13th/14th-gen Intel chip, pinning min state at 100% keeps cores out of low-power states and raises the idle voltage floor, the exact condition linked to Raptor Lake Vmin-shift aging. This gives the latency benefit without the aging risk.",
+      "evidence": "Intel guidance against sustained elevated voltage on Raptor Lake; power-plan core-parking removal reduces scheduling latency.",
+      "sources": ["https://learn.microsoft.com/windows/win32/power/power-policy-settings", "https://www.intel.com/content/www/us/en/support/articles/000099599.html"],
+      "op": { "type": "powercfg-scheme", "guid": "e9a42b02-d5df-448d-aa00-03f14749eb61", "name": "Ultimate Performance", "procMinState": 5 }
+    },
+    {
+      "id": "delivery-optimization-off",
+      "name": "Disable Windows Update P2P (Delivery Optimization)",
+      "category": "network", "kind": "action",
+      "tier": "safe", "impact": "medium", "risk": "low",
+      "requiresAdmin": true, "requiresReboot": false,
+      "summary": "Stops Windows from uploading/downloading updates peer-to-peer in the background.",
+      "details": "Delivery Optimization can use your bandwidth and CPU to seed Windows/Store updates to other PCs while you game, causing latency spikes and bandwidth contention. Setting download mode to HTTP-only (no peering) keeps updates working but ends the background P2P.",
+      "evidence": "Documented DODownloadMode policy; mode 0 disables peering.",
+      "sources": ["https://learn.microsoft.com/windows/deployment/do/waas-delivery-optimization-reference"],
+      "op": { "type": "registry", "root": "HKLM", "path": "SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization", "name": "DODownloadMode", "valueType": "DWord", "value": 0 }
+    },
+    {
+      "id": "disable-visual-effects",
+      "name": "Trim desktop animations (cosmetic)",
+      "category": "windows", "kind": "action",
+      "tier": "safe", "impact": "low", "risk": "none",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Disables window/taskbar animations for a snappier desktop and overlays.",
+      "details": "Cosmetic: negligible effect on fullscreen in-game FPS, but reduces compositor work so Alt-Tab and overlays feel instant. Tagged honestly as low/cosmetic.",
+      "evidence": "DWM animation cost; perceptual snappiness, not FPS.",
+      "sources": ["https://learn.microsoft.com/windows/win32/dwm/dwm-overview"],
+      "op": { "type": "multi", "ops": [
+        { "type": "registry", "root": "HKCU", "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\VisualEffects", "name": "VisualFXSetting", "valueType": "DWord", "value": 2 },
+        { "type": "registry", "root": "HKCU", "path": "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", "name": "TaskbarAnimations", "valueType": "DWord", "value": 0 },
+        { "type": "registry", "root": "HKCU", "path": "Control Panel\\Desktop\\WindowMetrics", "name": "MinAnimate", "valueType": "String", "value": "0" }
+      ]}
+    },
+
+    {
+      "id": "mouse-accel-off",
+      "name": "Disable mouse acceleration (Enhance Pointer Precision)",
+      "category": "input", "kind": "action",
+      "tier": "balanced", "impact": "situational", "risk": "none",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Turns off Windows pointer acceleration for 1:1, consistent aim.",
+      "details": "Enhance Pointer Precision speeds the cursor up the faster you move, so the same physical motion maps to different in-game angles. Competitive players disable it for muscle-memory consistency. This affects aim consistency / input feel, not FPS. Fully reversible.",
+      "evidence": "Raw, acceleration-free input is the standard competitive configuration; 1:1 mapping is reproducible.",
+      "sources": ["https://learn.microsoft.com/windows-hardware/design/component-guidelines/pointer-ballistics-for-windows-xp"],
+      "op": { "type": "multi", "ops": [
+        { "type": "registry", "root": "HKCU", "path": "Control Panel\\Mouse", "name": "MouseSpeed", "valueType": "String", "value": "0" },
+        { "type": "registry", "root": "HKCU", "path": "Control Panel\\Mouse", "name": "MouseThreshold1", "valueType": "String", "value": "0" },
+        { "type": "registry", "root": "HKCU", "path": "Control Panel\\Mouse", "name": "MouseThreshold2", "valueType": "String", "value": "0" }
+      ]}
+    },
+    {
+      "id": "usb-selective-suspend-off",
+      "name": "Disable USB selective suspend",
+      "category": "power", "kind": "action",
+      "tier": "balanced", "impact": "low", "risk": "low",
+      "requiresAdmin": true, "requiresReboot": false,
+      "summary": "Stops Windows from power-gating USB devices (mouse/keyboard/controller).",
+      "details": "USB selective suspend lets Windows put idle USB devices to sleep to save power. On a gaming desktop this can cause brief input-device hitches or micro-disconnects. Disabling it keeps your peripherals always-on. Reversible — FrameForge records and restores the prior AC/DC values.",
+      "evidence": "Selective suspend power-gates idle USB endpoints; disabling removes wake latency for input devices.",
+      "sources": ["https://learn.microsoft.com/windows-hardware/drivers/usbcon/usb-selective-suspend"],
+      "op": { "type": "powercfg-setting", "subgroup": "2a737441-1930-4402-8d77-b2bebba308a3", "setting": "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", "value": 0 }
+    },
+    {
+      "id": "hags-verify",
+      "name": "Hardware-Accelerated GPU Scheduling",
+      "category": "gpu", "kind": "verify",
+      "tier": "safe", "impact": "medium", "risk": "low",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Should be ON — required for NVIDIA Reflex and DLSS Frame Generation latency paths.",
+      "details": "HAGS lets the GPU manage its own frame queue, reducing CPU overhead and enabling the lowest-latency Reflex/Frame-Gen paths on RTX 40/50-series. We verify it's on rather than toggling it (toggling needs a reboot).",
+      "evidence": "NVIDIA requires HAGS for the Reflex/Frame-Generation low-latency pipeline.",
+      "sources": ["https://www.nvidia.com/en-us/geforce/news/reflex-low-latency-platform/"],
+      "op": { "type": "verify", "check": "hags" }
+    },
+    {
+      "id": "microcode-verify",
+      "name": "Raptor Lake microcode (Vmin-shift mitigation)",
+      "category": "cpu", "kind": "verify",
+      "tier": "safe", "impact": "high", "risk": "none",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Confirms your 14900KF is on the patched microcode that mitigates the 13th/14th-gen instability.",
+      "details": "Intel's 0x12B microcode (and BIOS updates) address the Vmin-shift degradation that affected some 13th/14th-gen K chips. This is a stability/longevity check, not an FPS toggle — but a degrading chip silently loses performance and crashes. If your microcode is older, update the BIOS.",
+      "evidence": "Intel root-cause + microcode mitigation announcements (2024).",
+      "sources": ["https://www.intel.com/content/www/us/en/support/articles/000099599.html"],
+      "op": { "type": "verify", "check": "microcode" }
+    },
+    {
+      "id": "rss-verify",
+      "name": "Receive Side Scaling (NIC)",
+      "category": "network", "kind": "verify",
+      "tier": "safe", "impact": "low", "risk": "low",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Should be ON so network interrupts spread across CPU cores.",
+      "details": "RSS distributes NIC interrupt processing across multiple cores instead of pinning core 0. Default-on; we verify it rather than 'fixing' something that isn't broken.",
+      "evidence": "Documented RSS behavior; default-enabled on modern adapters.",
+      "sources": ["https://learn.microsoft.com/windows-hardware/drivers/network/introduction-to-receive-side-scaling"],
+      "op": { "type": "verify", "check": "rss" }
+    },
+
+    {
+      "id": "intel-default-settings",
+      "name": "Intel Default Settings power profile (BIOS — do FIRST)",
+      "category": "cpu", "kind": "advise",
+      "tier": "advise-only", "impact": "high", "risk": "low",
+      "requiresAdmin": false, "requiresReboot": true,
+      "summary": "Apply the Intel-recommended power guardrail (PL1/PL2/ICCMax) in BIOS before any memory OC.",
+      "details": "MSI's default 'unlimited' power can push the 14900KF past Intel's spec, contributing to instability/aging. Set the Intel Default Settings (Performance: PL1/PL2 = 253W, ICCMax = 307A) in BIOS first. This protects the chip and is the recommended ordering BEFORE enabling XMP.",
+      "evidence": "Intel Default Settings guidance for Raptor Lake stability (2024).",
+      "sources": ["https://www.intel.com/content/www/us/en/support/articles/000099599.html"],
+      "op": { "type": "advise" },
+      "guide": ["Reboot and press Del to enter the MSI BIOS", "Go to OC → CPU Cooler Tuning (or 'Intel Default Settings')", "Choose 'Intel Default Settings' → 'Performance' (PL1/PL2 253W, ICCMax 307A)", "Save & Exit (F10)"]
+    },
+    {
+      "id": "enable-xmp",
+      "name": "Enable XMP — DDR5 5600 (BIOS — do AFTER Intel Default Settings)",
+      "category": "memory", "kind": "advise",
+      "tier": "advise-only", "impact": "high", "risk": "medium",
+      "requiresAdmin": false, "requiresReboot": true,
+      "summary": "Your RAM runs 4800 but is rated 5600 — enabling XMP is the single biggest free CPU-bound FPS lever here.",
+      "details": "Memory bandwidth/latency is one of the largest CPU-bound FPS levers on Raptor Lake. Detected DDR5 rated 5600 running at 4800 (XMP off). Enabling XMP Profile 1 typically yields high-single-digit to mid-teens % gains in CPU-bound titles. Do this AFTER setting Intel Default Settings so the platform is stable first. BIOS-only — Windows cannot toggle it.",
+      "evidence": "Outlet 1080p CPU-bound benchmarks: DDR5-4800 → rated XMP delivers large avg and 1%-low uplifts on 13th/14th gen.",
+      "sources": ["https://www.intel.com/content/www/us/en/gaming/resources/what-is-xmp.html"],
+      "op": { "type": "advise" },
+      "guide": ["Reboot and press Del to enter the MSI BIOS", "In EZ Mode, find the XMP/EXPO switch (top of screen) — or OC → Extreme Memory Profile (XMP)", "Select Profile 1 (DDR5-5600)", "Save & Exit (F10). If it fails to POST, clear CMOS and try Memory Try It at 5600."]
+    },
+    {
+      "id": "rebar-verify",
+      "name": "Resizable BAR (BIOS)",
+      "category": "gpu", "kind": "advise",
+      "tier": "advise-only", "impact": "medium", "risk": "low",
+      "requiresAdmin": false, "requiresReboot": true,
+      "summary": "Let the CPU access all 16GB of VRAM at once — verify it's enabled.",
+      "details": "Resizable BAR can improve performance in some titles by removing the 256MB VRAM aperture limit. On Z790 + RTX 5080 it should be on. Verify in the NVIDIA App (System → Resizable BAR) or BIOS (Re-Size BAR Support = Enabled, requires Above 4G Decoding).",
+      "evidence": "NVIDIA/AMD ReBAR title-dependent gains.",
+      "sources": ["https://www.nvidia.com/en-us/geforce/news/resizable-bar-best-buy/"],
+      "op": { "type": "advise" },
+      "guide": ["Open the NVIDIA App → System → check 'Resizable BAR'", "If Off: reboot → Del → BIOS → Settings → Advanced → PCIe → enable 'Above 4G Decoding' and 'Re-Size BAR Support'", "Save & Exit"]
+    },
+    {
+      "id": "reflex-ingame",
+      "name": "Enable NVIDIA Reflex in-game",
+      "category": "gpu", "kind": "advise",
+      "tier": "advise-only", "impact": "high", "risk": "none",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "The real latency win — turn Reflex On/On+Boost in each game that supports it.",
+      "details": "NVIDIA Reflex reduces render-queue latency far more effectively than any driver/registry tweak, often 20–40ms. Prefer the in-game Reflex toggle over the driver's Low Latency Mode. Pair with HAGS on and a frame cap below your refresh.",
+      "evidence": "NVIDIA Reflex measured click-to-photon latency reductions across supported titles.",
+      "sources": ["https://www.nvidia.com/en-us/geforce/news/reflex-low-latency-platform/"],
+      "op": { "type": "advise" },
+      "guide": ["In each supported game's Video/Graphics settings, find 'NVIDIA Reflex Low Latency'", "Set it to 'On' (or 'On + Boost' for the lowest latency)", "Keep HAGS enabled and cap FPS just below your refresh for the best latency"]
+    },
+    {
+      "id": "wired-ethernet",
+      "name": "Use wired 2.5G Ethernet, not Wi-Fi",
+      "category": "network", "kind": "advise",
+      "tier": "advise-only", "impact": "high", "risk": "none",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "For online games, a wired connection slashes latency variance vs Wi-Fi.",
+      "details": "Wi-Fi adds jitter and packet loss that no registry tweak can fix. Your board has Intel 2.5G Ethernet — use it for competitive play. This affects ping/consistency, not raw FPS.",
+      "evidence": "Wired vs Wi-Fi latency-jitter is well established.",
+      "sources": ["https://www.intel.com/content/www/us/en/gaming/resources/wired-vs-wireless-gaming.html"],
+      "op": { "type": "advise" },
+      "guide": ["Plug an Ethernet cable into the board's 2.5G port", "Windows will prefer it automatically when connected"]
+    },
+    {
+      "id": "move-libraries-off-qvo",
+      "name": "Move active games + shader cache to the 980 PRO",
+      "category": "storage", "kind": "advise",
+      "tier": "advise-only", "impact": "medium", "risk": "low",
+      "requiresAdmin": false, "requiresReboot": false,
+      "summary": "Keep the games you actually play on the fast NVMe, not the slower QLC SATA SSD.",
+      "details": "The Samsung 860 QVO is QLC SATA — fine for storage, but slower for texture streaming and shader compilation, which can show up as traversal stutter and longer shader-comp hitches. Keep your active library and the DirectX shader cache on the 980 PRO (NVMe).",
+      "evidence": "QLC SATA sustained-write/random-read deficits vs NVMe TLC affect streaming/shader-comp stutter.",
+      "sources": ["https://www.tomshardware.com/reviews/samsung-980-pro-m2-nvme-ssd-review"],
+      "op": { "type": "advise" },
+      "guide": ["In Steam: Settings → Storage → add/select the 980 PRO drive → move your active games there", "Windows: Settings → System → Display → Graphics → leave shader cache default (driver caches to the OS drive — keep the OS on the 980 PRO)"]
+    },
+    {
+      "id": "nagle-disable",
+      "name": "Disable Nagle's algorithm (TCP games only)",
+      "category": "network", "kind": "advise",
+      "tier": "advise-only", "impact": "situational", "risk": "low",
+      "requiresAdmin": true, "requiresReboot": true,
+      "summary": "Advise-only: helps a few TCP-based games, useless for UDP shooters (CS2/Valorant/Apex).",
+      "details": "Nagle batches small TCP packets, adding a few ms. Disabling can help latency in TCP-based online games, but most competitive shooters use UDP where this does nothing. Because it requires fragile per-interface GUID matching and a reboot, FrameForge advises rather than auto-applies it.",
+      "evidence": "Nagle batching delay applies only to TCP; UDP titles unaffected.",
+      "sources": ["https://learn.microsoft.com/troubleshoot/windows-server/networking/description-nagle-algorithm"],
+      "op": { "type": "advise" },
+      "guide": ["Only do this for TCP-based games", "Under HKLM\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\{your-active-GUID}, add DWORD TcpAckFrequency=1 and TCPNoDelay=1", "Reboot. Remove both values to revert."]
+    }
+  ]
+}

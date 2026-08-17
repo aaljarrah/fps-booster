@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+*.zip
+
+# Runtime state (machine-specific: applied-tweak rollback ledger, cached catalogs)
+data/state/
+
+# Measurement captures
+*.etl
+PresentMon-*.csv
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.vscode/
+.idea/
+*.swp

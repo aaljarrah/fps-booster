@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "note": "Driver-INDEPENDENT template. The engine's build-catalog action resolves each csnName + value label to the concrete SettingID/code from -createCSN on the user's actual driver, producing data/nvidia-settings.json. 'auto-cap' is replaced with (refresh - 4) FPS for the user's display.",
+  "settings": {
+    "power-mgmt":    { "csnName": "Power Management - Mode", "recommendedLabel": "Prefer maximum performance", "defaultLabel": "Optimal performance", "category": "power", "tier": "balanced", "impact": "medium", "scope": "per-game", "antiCheatSafe": true, "why": "Keeps the GPU at full clocks so frametimes don't wobble when the CPU briefly stalls. Consistency, not raw FPS." },
+    "vsync-off":     { "csnName": "Vertical Sync", "recommendedLabel": "Force off", "defaultLabel": "Use the 3D application setting", "category": "sync", "tier": "balanced", "impact": "high", "scope": "per-game", "antiCheatSafe": true, "why": "Absolute-minimum input lag for the Esports profile; accepts screen tearing." },
+    "vsync-on":      { "csnName": "Vertical Sync", "recommendedLabel": "Force on", "defaultLabel": "Use the 3D application setting", "category": "sync", "tier": "balanced", "impact": "high", "scope": "per-game", "antiCheatSafe": true, "why": "Tear-free with the lowest latency ONLY when paired with G-SYNC + a sub-refresh cap. Gated on VRR detection." },
+    "ull-off":       { "csnName": "Ultra Low Latency - Enabled", "recommendedLabel": "Off", "defaultLabel": "Off", "category": "latency", "tier": "advise-only", "impact": "situational", "scope": "per-game", "antiCheatSafe": true, "why": "Left Off: in-game NVIDIA Reflex does this better, and Ultra can hurt on a CPU-bound rig." },
+    "pref-refresh":  { "csnName": "Prefered Refreshrate", "recommendedLabel": "Highest available", "defaultLabel": "Use the 3D application setting", "category": "latency", "tier": "safe", "impact": "low", "scope": "per-game", "antiCheatSafe": true, "why": "Insurance so your high-refresh panel is never stuck at a lower refresh." },
+    "fps-cap":       { "csnName": "Frame Rate Limiter V3", "recommendedLabel": "auto-cap", "defaultLabel": "Off", "category": "framecap", "tier": "balanced", "impact": "medium", "scope": "per-game", "antiCheatSafe": true, "why": "Caps a few FPS below your refresh so G-SYNC stays engaged and never hits the V-Sync latency wall." },
+    "bg-cap":        { "csnName": "Frame Rate Limiter - Background Application", "recommendedLabel": "30 FPS", "defaultLabel": "Off", "category": "framecap", "tier": "safe", "impact": "low", "scope": "global", "antiCheatSafe": true, "why": "Throttles alt-tabbed games to save power/heat; no effect on the focused game." },
+    "shader-size":   { "csnName": "Shader Cache - Cache Size", "recommendedLabel": "10GB", "defaultLabel": "1GB", "category": "shader", "tier": "safe", "impact": "low", "scope": "global", "antiCheatSafe": true, "why": "A bigger shader cache means fewer first-run shader-compile stutters. Anti-stutter hygiene, not an FPS gain." },
+    "shader-enabled":{ "csnName": "Shader Cache - Enabled", "recommendedLabel": "On", "defaultLabel": "On", "category": "shader", "tier": "safe", "impact": "low", "scope": "global", "antiCheatSafe": true, "why": "Confirms the shader disk cache is on." },
+    "gsync-global":  { "csnName": "GSYNC - Global Feature", "recommendedLabel": "On", "defaultLabel": "Off", "category": "sync", "tier": "balanced", "impact": "situational", "scope": "global", "antiCheatSafe": true, "why": "Enables G-SYNC globally (only offered if a VRR display is detected)." },
+    "gsync-mode":    { "csnName": "GSYNC - Global Mode", "recommendedLabel": "Fullscreen and Windowed", "defaultLabel": "Fullscreen only", "category": "sync", "tier": "balanced", "impact": "situational", "scope": "global", "antiCheatSafe": true, "why": "Lets G-SYNC work in borderless/windowed too." }
+  },
+  "presets": {
+    "esports":  { "name": "Esports / Lowest Latency", "description": "Tear-tolerant, absolute-minimum input lag (the config many CS2/Valorant pros run). Average FPS unchanged.", "applied": ["power-mgmt", "vsync-off", "ull-off", "pref-refresh", "shader-enabled", "shader-size", "bg-cap"], "needsVRR": false },
+    "balanced": { "name": "Balanced (Recommended)", "description": "Tear-free and within ~1ms of the latency floor. Requires a G-SYNC/VRR display; falls back to the Esports sync model if none is detected.", "applied": ["power-mgmt", "gsync-global", "gsync-mode", "vsync-on", "fps-cap", "pref-refresh", "shader-enabled", "shader-size", "bg-cap"], "needsVRR": true },
+    "quality":  { "name": "Quality", "description": "For heavier titles (Squad/PUBG/Apex high) when GPU-bound. Behaves like Balanced on 1080p shooters; touches no image-quality knobs.", "applied": ["power-mgmt", "gsync-global", "gsync-mode", "vsync-on", "pref-refresh", "shader-enabled", "shader-size", "bg-cap"], "needsVRR": true }
+  },
+  "placebo": [
+    { "csnName": "Texture Filtering - Quality", "claim": "Set to High Performance", "why": "Modern GPUs lose ~0 FPS from full-quality filtering; degrading it just makes textures shimmer. Leave at Quality." },
+    { "csnName": "Threaded Optimization", "claim": "Forced Off", "why": "POTENTIALLY HARMFUL on a hybrid P+E CPU — forcing single-threaded driver work removes free parallelism. Leave Auto." },
+    { "csnName": "CUDA - Force P2 State", "claim": "Forced Off", "why": "A memory-overclock-headroom tweak with no gaming FPS effect. Leave default." },
+    { "csnName": "Texture Filtering - Negative LOD bias", "claim": "Clamp/negative", "why": "Sharpening textures below the game's own minimum is the one genuine unfair-advantage flag anti-cheat may scrutinize. FrameForge never ships this." },
+    { "csnName": "Texture Filtering - Trilinear Optimization", "claim": "Off", "why": "Image-quality micro-tweak with no measurable competitive FPS benefit." }
+  ],
+  "inGame": [
+    { "name": "NVIDIA Reflex Low Latency = On", "games": "CS2, Valorant, Apex, Fortnite, PUBG, Dota, DBD, League", "note": "The single biggest real latency win (~20-40ms). Use On+Boost only if you ever drop GPU-bound. Squad has no Reflex - the frame cap covers it.", "warn": false },
+    { "name": "Reflex 2 / Frame Warp = On", "games": "Valorant, The Finals (RTX 50-series)", "note": "Further latency cut on Blackwell; minor edge-warp on very fast flicks.", "warn": false },
+    { "name": "DLSS Multi-Frame Generation = OFF", "games": "all competitive titles", "note": "MFG raises the FPS number but ADDS input latency - the opposite of what you want competitively.", "warn": true }
+  ]
+}

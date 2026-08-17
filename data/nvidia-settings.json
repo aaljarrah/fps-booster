@@ -1,0 +1,272 @@
+{
+    "schemaVersion":  2,
+    "driverVerifiedOn":  "32.0.16.1088",
+    "generatedAt":  "2026-08-17T21:09:01",
+    "refreshHz":  241,
+    "settings":  {
+                     "power-mgmt":  {
+                                        "name":  "Power Management - Mode",
+                                        "recommendedLabel":  "Prefer maximum performance",
+                                        "settingId":  274197361,
+                                        "recommendedCode":  1,
+                                        "defaultLabel":  "Optimal performance",
+                                        "defaultCode":  5,
+                                        "category":  "power",
+                                        "tier":  "balanced",
+                                        "impact":  "medium",
+                                        "scope":  "per-game",
+                                        "antiCheatSafe":  true,
+                                        "idConfidence":  "verified",
+                                        "why":  "Keeps the GPU at full clocks so frametimes don\u0027t wobble when the CPU briefly stalls. Consistency, not raw FPS."
+                                    },
+                     "vsync-off":  {
+                                       "name":  "Vertical Sync",
+                                       "recommendedLabel":  "Force off",
+                                       "settingId":  11041231,
+                                       "recommendedCode":  138504007,
+                                       "defaultLabel":  "Use the 3D application setting",
+                                       "defaultCode":  1620202130,
+                                       "category":  "sync",
+                                       "tier":  "balanced",
+                                       "impact":  "high",
+                                       "scope":  "per-game",
+                                       "antiCheatSafe":  true,
+                                       "idConfidence":  "verified",
+                                       "why":  "Absolute-minimum input lag for the Esports profile; accepts screen tearing."
+                                   },
+                     "vsync-on":  {
+                                      "name":  "Vertical Sync",
+                                      "recommendedLabel":  "Force on",
+                                      "settingId":  11041231,
+                                      "recommendedCode":  1199655232,
+                                      "defaultLabel":  "Use the 3D application setting",
+                                      "defaultCode":  1620202130,
+                                      "category":  "sync",
+                                      "tier":  "balanced",
+                                      "impact":  "high",
+                                      "scope":  "per-game",
+                                      "antiCheatSafe":  true,
+                                      "idConfidence":  "verified",
+                                      "why":  "Tear-free with the lowest latency ONLY when paired with G-SYNC + a sub-refresh cap. Gated on VRR detection."
+                                  },
+                     "ull-off":  {
+                                     "name":  "Ultra Low Latency - Enabled",
+                                     "recommendedLabel":  "Off",
+                                     "settingId":  277041152,
+                                     "recommendedCode":  0,
+                                     "defaultLabel":  "Off",
+                                     "defaultCode":  0,
+                                     "category":  "latency",
+                                     "tier":  "advise-only",
+                                     "impact":  "situational",
+                                     "scope":  "per-game",
+                                     "antiCheatSafe":  true,
+                                     "idConfidence":  "verified",
+                                     "why":  "Left Off: in-game NVIDIA Reflex does this better, and Ultra can hurt on a CPU-bound rig."
+                                 },
+                     "pref-refresh":  {
+                                          "name":  "Prefered Refreshrate",
+                                          "recommendedLabel":  "Highest available",
+                                          "settingId":  6600001,
+                                          "recommendedCode":  1,
+                                          "defaultLabel":  "Use the 3D application setting",
+                                          "defaultCode":  0,
+                                          "category":  "latency",
+                                          "tier":  "safe",
+                                          "impact":  "low",
+                                          "scope":  "per-game",
+                                          "antiCheatSafe":  true,
+                                          "idConfidence":  "verified",
+                                          "why":  "Insurance so your high-refresh panel is never stuck at a lower refresh."
+                                      },
+                     "fps-cap":  {
+                                     "name":  "Frame Rate Limiter V3",
+                                     "recommendedLabel":  "237 FPS",
+                                     "settingId":  277041154,
+                                     "recommendedCode":  237,
+                                     "defaultLabel":  "Off",
+                                     "defaultCode":  0,
+                                     "category":  "framecap",
+                                     "tier":  "balanced",
+                                     "impact":  "medium",
+                                     "scope":  "per-game",
+                                     "antiCheatSafe":  true,
+                                     "idConfidence":  "verified",
+                                     "why":  "Caps a few FPS below your refresh so G-SYNC stays engaged and never hits the V-Sync latency wall."
+                                 },
+                     "bg-cap":  {
+                                    "name":  "Frame Rate Limiter - Background Application",
+                                    "recommendedLabel":  "30 FPS",
+                                    "settingId":  277041157,
+                                    "recommendedCode":  30,
+                                    "defaultLabel":  "Off",
+                                    "defaultCode":  0,
+                                    "category":  "framecap",
+                                    "tier":  "safe",
+                                    "impact":  "low",
+                                    "scope":  "global",
+                                    "antiCheatSafe":  true,
+                                    "idConfidence":  "verified",
+                                    "why":  "Throttles alt-tabbed games to save power/heat; no effect on the focused game."
+                                },
+                     "shader-size":  {
+                                         "name":  "Shader Cache - Cache Size",
+                                         "recommendedLabel":  "10GB",
+                                         "settingId":  11306135,
+                                         "recommendedCode":  10240,
+                                         "defaultLabel":  "1GB",
+                                         "defaultCode":  1024,
+                                         "category":  "shader",
+                                         "tier":  "safe",
+                                         "impact":  "low",
+                                         "scope":  "global",
+                                         "antiCheatSafe":  true,
+                                         "idConfidence":  "verified",
+                                         "why":  "A bigger shader cache means fewer first-run shader-compile stutters. Anti-stutter hygiene, not an FPS gain."
+                                     },
+                     "shader-enabled":  {
+                                            "name":  "Shader Cache - Enabled",
+                                            "recommendedLabel":  "On",
+                                            "settingId":  1675263,
+                                            "recommendedCode":  1,
+                                            "defaultLabel":  "On",
+                                            "defaultCode":  1,
+                                            "category":  "shader",
+                                            "tier":  "safe",
+                                            "impact":  "low",
+                                            "scope":  "global",
+                                            "antiCheatSafe":  true,
+                                            "idConfidence":  "verified",
+                                            "why":  "Confirms the shader disk cache is on."
+                                        },
+                     "gsync-global":  {
+                                          "name":  "GSYNC - Global Feature",
+                                          "recommendedLabel":  "On",
+                                          "settingId":  278196567,
+                                          "recommendedCode":  1,
+                                          "defaultLabel":  "Off",
+                                          "defaultCode":  0,
+                                          "category":  "sync",
+                                          "tier":  "balanced",
+                                          "impact":  "situational",
+                                          "scope":  "global",
+                                          "antiCheatSafe":  true,
+                                          "idConfidence":  "verified",
+                                          "why":  "Enables G-SYNC globally (only offered if a VRR display is detected)."
+                                      },
+                     "gsync-mode":  {
+                                        "name":  "GSYNC - Global Mode",
+                                        "recommendedLabel":  "Fullscreen and Windowed",
+                                        "settingId":  278196727,
+                                        "recommendedCode":  2,
+                                        "defaultLabel":  "Fullscreen only",
+                                        "defaultCode":  1,
+                                        "category":  "sync",
+                                        "tier":  "balanced",
+                                        "impact":  "situational",
+                                        "scope":  "global",
+                                        "antiCheatSafe":  true,
+                                        "idConfidence":  "verified",
+                                        "why":  "Lets G-SYNC work in borderless/windowed too."
+                                    }
+                 },
+    "presets":  {
+                    "esports":  {
+                                    "name":  "Esports / Lowest Latency",
+                                    "description":  "Tear-tolerant, absolute-minimum input lag (the config many CS2/Valorant pros run). Average FPS unchanged.",
+                                    "applied":  [
+                                                    "power-mgmt",
+                                                    "vsync-off",
+                                                    "ull-off",
+                                                    "pref-refresh",
+                                                    "shader-enabled",
+                                                    "shader-size",
+                                                    "bg-cap"
+                                                ],
+                                    "needsVRR":  false
+                                },
+                    "balanced":  {
+                                     "name":  "Balanced (Recommended)",
+                                     "description":  "Tear-free and within ~1ms of the latency floor. Requires a G-SYNC/VRR display; falls back to the Esports sync model if none is detected.",
+                                     "applied":  [
+                                                     "power-mgmt",
+                                                     "gsync-global",
+                                                     "gsync-mode",
+                                                     "vsync-on",
+                                                     "fps-cap",
+                                                     "pref-refresh",
+                                                     "shader-enabled",
+                                                     "shader-size",
+                                                     "bg-cap"
+                                                 ],
+                                     "needsVRR":  true
+                                 },
+                    "quality":  {
+                                    "name":  "Quality",
+                                    "description":  "For heavier titles (Squad/PUBG/Apex high) when GPU-bound. Behaves like Balanced on 1080p shooters; touches no image-quality knobs.",
+                                    "applied":  [
+                                                    "power-mgmt",
+                                                    "gsync-global",
+                                                    "gsync-mode",
+                                                    "vsync-on",
+                                                    "pref-refresh",
+                                                    "shader-enabled",
+                                                    "shader-size",
+                                                    "bg-cap"
+                                                ],
+                                    "needsVRR":  true
+                                }
+                },
+    "placebo":  [
+                    {
+                        "name":  "Texture Filtering - Quality",
+                        "settingId":  13510289,
+                        "claim":  "Set to High Performance",
+                        "why":  "Modern GPUs lose ~0 FPS from full-quality filtering; degrading it just makes textures shimmer. Leave at Quality."
+                    },
+                    {
+                        "name":  "Threaded Optimization",
+                        "settingId":  549528094,
+                        "claim":  "Forced Off",
+                        "why":  "POTENTIALLY HARMFUL on a hybrid P+E CPU â€” forcing single-threaded driver work removes free parallelism. Leave Auto."
+                    },
+                    {
+                        "name":  "CUDA - Force P2 State",
+                        "settingId":  1343646814,
+                        "claim":  "Forced Off",
+                        "why":  "A memory-overclock-headroom tweak with no gaming FPS effect. Leave default."
+                    },
+                    {
+                        "name":  "Texture Filtering - Negative LOD bias",
+                        "settingId":  1686376,
+                        "claim":  "Clamp/negative",
+                        "why":  "Sharpening textures below the game\u0027s own minimum is the one genuine unfair-advantage flag anti-cheat may scrutinize. FrameForge never ships this."
+                    },
+                    {
+                        "name":  "Texture Filtering - Trilinear Optimization",
+                        "settingId":  3066610,
+                        "claim":  "Off",
+                        "why":  "Image-quality micro-tweak with no measurable competitive FPS benefit."
+                    }
+                ],
+    "inGame":  [
+                   {
+                       "name":  "NVIDIA Reflex Low Latency = On",
+                       "games":  "CS2, Valorant, Apex, Fortnite, PUBG, Dota, DBD, League",
+                       "note":  "The single biggest real latency win (~20-40ms). Use On+Boost only if you ever drop GPU-bound. Squad has no Reflex - the frame cap covers it.",
+                       "warn":  false
+                   },
+                   {
+                       "name":  "Reflex 2 / Frame Warp = On",
+                       "games":  "Valorant, The Finals (RTX 50-series)",
+                       "note":  "Further latency cut on Blackwell; minor edge-warp on very fast flicks.",
+                       "warn":  false
+                   },
+                   {
+                       "name":  "DLSS Multi-Frame Generation = OFF",
+                       "games":  "all competitive titles",
+                       "note":  "MFG raises the FPS number but ADDS input latency - the opposite of what you want competitively.",
+                       "warn":  true
+                   }
+               ]
+}
