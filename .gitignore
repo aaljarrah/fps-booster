@@ -25,3 +25,6 @@ $RECYCLE.BIN/
 .vscode/
 .idea/
 *.swp
+
+# Capture-harness failure marker (regenerated on each failed run)
+screenshots/**/FAILED.txt

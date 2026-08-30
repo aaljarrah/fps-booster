@@ -8,212 +8,324 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- ===== Custom title bar ===== -->
+  <!-- ===== Titlebar (drag region; caption buttons come from titleBarOverlay) ===== -->
   <header class="titlebar">
-    <div class="tb-left">
-      <div class="logo">
-        <svg viewBox="0 0 32 32" width="22" height="22" aria-hidden="true">
-          <defs>
-            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#41d6ff"/><stop offset="1" stop-color="#7c5cff"/>
-            </linearGradient>
-          </defs>
-          <path d="M6 3h20l-2 7H10l-1 4h12l-2 7H7L4 29 6 3z" fill="url(#lg)"/>
-        </svg>
-        <span class="logo-text">Frame<b>Forge</b></span>
-      </div>
-      <span class="tb-tag">FPS optimizer · measured, not magic</span>
-    </div>
-    <div class="tb-right">
-      <div class="mode-switch" id="modeSwitch" title="Toggle advanced controls">
-        <span data-mode="simple" class="active">Simple</span>
-        <span data-mode="advanced">Advanced</span>
-      </div>
-      <div class="win-controls">
-        <button id="winMin" title="Minimize" aria-label="Minimize">&#x2013;</button>
-        <button id="winMax" title="Maximize" aria-label="Maximize">&#x25A1;</button>
-        <button id="winClose" class="close" title="Close" aria-label="Close">&#x2715;</button>
-      </div>
+    <svg class="app-icon" viewBox="0 0 16 16" aria-hidden="true">
+      <rect x="0.5" y="0.5" width="15" height="15" rx="3.5" fill="none" stroke="currentColor" opacity="0.55"/>
+      <path d="M8.9 3 5.2 8.4h2.4L6.9 13l3.9-5.7H8.3L8.9 3z" fill="currentColor" opacity="0.85"/>
+    </svg>
+    <span class="app-name">FrameForge</span>
+    <!-- Shown only during FF_CAPTURE runs; the real window uses the native titleBarOverlay -->
+    <div class="caption-controls" id="captionFallback" hidden aria-hidden="true">
+      <span class="cbtn">&#xE921;</span><span class="cbtn">&#xE922;</span><span class="cbtn">&#xE8BB;</span>
     </div>
   </header>
 
   <div class="shell">
-    <!-- ===== Sidebar ===== -->
-    <nav class="sidebar">
-      <button class="nav-item active" data-view="dashboard">
-        <svg viewBox="0 0 24 24" class="ic"><path d="M4 13h7V4H4v9zm0 7h7v-5H4v5zm9 0h7v-9h-7v9zm0-16v5h7V4h-7z"/></svg>
-        <span>Dashboard</span>
-      </button>
-      <button class="nav-item" data-view="boost">
-        <svg viewBox="0 0 24 24" class="ic"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>
-        <span>One-Click Boost</span>
-      </button>
-      <button class="nav-item" data-view="tweaks">
-        <svg viewBox="0 0 24 24" class="ic"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2-1.5.3-2.5-2.5-.6L15.5 5 13 6 12 3.7 11 5 8.5 5 7.2 7.4 4.7 8l.3 2.5L3 12l2 1.5-.3 2.5 2.5.6L8.5 19 11 18l1 2.3L13 18l2.5 0 1.3-2.4 2.5-.6-.3-2.5L21 12z"/></svg>
-        <span>Tweaks</span>
-        <span class="nav-badge" id="tweaksAppliedBadge"></span>
-      </button>
-      <button class="nav-item" data-view="benchmark">
-        <svg viewBox="0 0 24 24" class="ic"><path d="M3 3h2v18H3V3zm16 6h2v12h-2V9zm-8-4h2v16h-2V5zm4 8h2v8h-2v-8zM7 11h2v10H7V11z"/></svg>
-        <span>Benchmark</span>
-      </button>
-      <button class="nav-item" data-view="focus">
-        <svg viewBox="0 0 24 24" class="ic"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 4a6 6 0 110 12 6 6 0 010-12zm0 3a3 3 0 100 6 3 3 0 000-6z"/></svg>
-        <span>Game Focus</span>
-      </button>
-      <button class="nav-item" data-view="nvidia" id="navNvidia" hidden>
-        <svg viewBox="0 0 24 24" class="ic"><path d="M3 5h18v11H3V5zm2 2v7h14V7H5zm3 12h8v2H8v-2z"/></svg>
-        <span>NVIDIA</span>
-      </button>
-      <button class="nav-item" data-view="safety">
-        <svg viewBox="0 0 24 24" class="ic"><path d="M12 2l8 3v6c0 5-3.4 8.7-8 11-4.6-2.3-8-6-8-11V5l8-3zm0 4.2L7 8v3c0 3.4 2.1 6 5 7.7 2.9-1.7 5-4.3 5-7.7V8l-5-1.8z"/></svg>
-        <span>Safety &amp; Revert</span>
-      </button>
-
-      <div class="sidebar-foot">
-        <div id="adminPill" class="admin-pill unknown">
-          <span class="dot"></span><span id="adminText">Checking rights…</span>
+    <!-- ===== NavigationView pane (sits on Mica) ===== -->
+    <nav class="navpane">
+      <div class="nav-profile">
+        <span class="glyph">&#xE977;</span>
+        <div>
+          <div class="nav-profile-name" id="navRigName">This PC</div>
+          <div class="nav-profile-sub" id="navRigSub">Detecting hardware&hellip;</div>
         </div>
+      </div>
+
+      <div class="nav-search">
+        <input id="navSearch" type="text" placeholder="Find a setting" spellcheck="false" autocomplete="off">
+        <span class="glyph">&#xE721;</span>
+      </div>
+
+      <div class="nav-scroll">
+        <button class="nav-item active" data-view="dashboard">
+          <span class="glyph">&#xE80F;</span><span class="nav-label">Home</span>
+        </button>
+
+        <button class="nav-item" data-view="boost">
+          <span class="glyph">&#xE945;</span><span class="nav-label">One-click boost</span>
+        </button>
+        <button class="nav-item" data-view="tweaks">
+          <span class="glyph">&#xE713;</span><span class="nav-label">Tweaks</span>
+          <span class="nav-badge" id="tweaksAppliedBadge"></span>
+        </button>
+        <button class="nav-item" data-view="focus">
+          <span class="glyph">&#xE7FC;</span><span class="nav-label">Game focus</span>
+        </button>
+        <button class="nav-item" data-view="nvidia" id="navNvidia" hidden>
+          <span class="glyph">&#xE950;</span><span class="nav-label">NVIDIA</span>
+        </button>
+
+        <button class="nav-item" data-view="benchmark">
+          <span class="glyph">&#xEC4A;</span><span class="nav-label">Benchmark</span>
+        </button>
+
+        <button class="nav-item" data-view="health">
+          <span class="glyph">&#xE9D9;</span><span class="nav-label">Windows health</span>
+          <span class="nav-badge" id="healthBadge"></span>
+        </button>
+        <button class="nav-item" data-view="repair">
+          <span class="glyph">&#xE90F;</span><span class="nav-label">Repair</span>
+        </button>
+
+        <button class="nav-item" data-view="safety">
+          <span class="glyph">&#xEA18;</span><span class="nav-label">Safety and recovery</span>
+        </button>
+      </div>
+
+      <div class="nav-foot">
+        <button class="nav-item nav-toggle-row" id="modeSwitch" role="switch" aria-checked="false" title="Show every individual tweak and advanced controls">
+          <span class="glyph">&#xEC7A;</span><span class="nav-label">Advanced mode</span>
+          <span class="mini-switch" aria-hidden="true"></span>
+          <span data-mode="simple" hidden></span><span data-mode="advanced" hidden></span>
+        </button>
+        <button class="nav-item" id="adminPill">
+          <span class="glyph">&#xE7EF;</span><span class="nav-label" id="adminText">Checking access&hellip;</span>
+          <span class="admin-dot"></span>
+        </button>
       </div>
     </nav>
 
-    <!-- ===== Main content ===== -->
+    <!-- ===== Content region ===== -->
     <main class="content" id="content">
-      <!-- Dashboard -->
-      <section class="view active" id="view-dashboard">
-        <div class="view-head">
-          <div>
-            <h1 id="greeting">Your rig</h1>
-            <p class="sub" id="rigSub">Detecting hardware…</p>
-          </div>
-          <div class="score-wrap">
-            <svg viewBox="0 0 120 120" class="score-ring" width="118" height="118">
-              <circle cx="60" cy="60" r="52" class="ring-bg"/>
-              <circle cx="60" cy="60" r="52" class="ring-fg" id="scoreRing"/>
-            </svg>
-            <div class="score-num"><b id="scoreVal">–</b><span>OPT SCORE</span></div>
-          </div>
+      <!-- Search results (no nav entry; reached by typing in "Find a setting") -->
+      <section class="view" id="view-search">
+        <div class="page">
+          <h1 class="page-title" id="searchTitle">Search results</h1>
+          <div id="searchResults"></div>
         </div>
-
-        <div class="spec-grid" id="specGrid"><!-- spec cards --></div>
-
-        <div class="section-head"><h2>Detected opportunities</h2><span class="hint" id="oppHint"></span></div>
-        <div class="opp-list" id="oppList"><div class="empty">Scanning…</div></div>
       </section>
 
-      <!-- One-Click Boost -->
+      <!-- Home -->
+      <section class="view active" id="view-dashboard">
+        <div class="page">
+          <h1 class="page-title" id="greeting">Home</h1>
+          <div class="card-list" id="dashTop"></div>
+          <div class="section-head"><h2>Device specifications</h2></div>
+          <div class="card-list" id="specGrid"></div>
+          <div class="section-head"><h2>Detected opportunities</h2></div>
+          <div class="card-list" id="oppList"><div class="empty">Scanning&hellip;</div></div>
+        </div>
+      </section>
+
+      <!-- One-click boost -->
       <section class="view" id="view-boost">
-        <div class="view-head"><div><h1>One-Click Boost</h1><p class="sub">Curated, reversible profiles. Every change is logged and can be undone instantly.</p></div></div>
-        <div class="profile-grid" id="profileGrid"></div>
-        <div class="boost-note">
-          <b>How this stays safe:</b> FrameForge records the exact previous value of every setting before changing it.
-          Hit <i>Revert Everything</i> any time to restore your system precisely. Nothing here deletes files or "cleans" your registry.
+        <div class="page">
+          <h1 class="page-title">One-click boost</h1>
+          <div class="card-list" id="profileGrid"></div>
+          <div class="section-head"><h2>How this stays safe</h2></div>
+          <div class="infobar" id="boostNote">
+            <span class="glyph">&#xE946;</span>
+            <div class="ib-body">FrameForge records the exact previous value of every setting before changing it.
+              Use <b>Revert everything</b> any time to restore your system precisely. Nothing here deletes files or "cleans" your registry.</div>
+          </div>
         </div>
       </section>
 
       <!-- Tweaks -->
       <section class="view" id="view-tweaks">
-        <div class="view-head">
-          <div><h1>Tweaks</h1><p class="sub">Every individual optimization, fully transparent. Toggle one at a time.</p></div>
-          <div class="filter-row" id="tweakFilters"></div>
+        <div class="page">
+          <h1 class="page-title">Tweaks</h1>
+          <div id="tweakFilters" style="margin-bottom:16px"></div>
+          <div id="tweakList"></div>
         </div>
-        <div class="tweak-list" id="tweakList"></div>
       </section>
 
       <!-- Benchmark -->
       <section class="view" id="view-benchmark">
-        <div class="view-head"><div><h1>Benchmark</h1><p class="sub">Real frametimes via Intel PresentMon. Prove the gain — don't guess it.</p></div></div>
-        <div class="bench-controls card">
-          <div class="bench-row">
-            <label>Target game / app
-              <select id="benchTarget"><option value="">Refresh to list running windows…</option></select>
-            </label>
-            <label>Duration
-              <select id="benchSeconds">
-                <option value="10">10s</option><option value="20" selected>20s</option><option value="30">30s</option><option value="60">60s</option>
-              </select>
-            </label>
-            <button class="btn ghost" id="benchRefresh">↻ Refresh</button>
+        <div class="page">
+          <h1 class="page-title">Benchmark</h1>
+          <div class="card-list">
+            <div class="scard">
+              <span class="scard-icon">&#xE7FC;</span>
+              <div class="scard-body">
+                <div class="scard-title">Target game or app</div>
+                <div class="scard-desc">Must be running and actively rendering frames</div>
+              </div>
+              <div class="scard-control">
+                <span class="fcombo"><select id="benchTarget" style="min-width:248px"><option value="">Refresh to list running windows&hellip;</option></select></span>
+                <button class="fbtn" id="benchRefresh"><span class="glyph">&#xE72C;</span>Refresh</button>
+              </div>
+            </div>
+            <div class="scard">
+              <span class="scard-icon">&#xE823;</span>
+              <div class="scard-body">
+                <div class="scard-title">Capture length</div>
+                <div class="scard-desc">Longer runs average out more run-to-run noise</div>
+              </div>
+              <div class="scard-control">
+                <span class="fcombo"><select id="benchSeconds" style="min-width:132px">
+                  <option value="10">10 seconds</option><option value="20" selected>20 seconds</option>
+                  <option value="30">30 seconds</option><option value="60">60 seconds</option>
+                </select></span>
+              </div>
+            </div>
+            <div class="scard">
+              <span class="scard-icon">&#xE768;</span>
+              <div class="scard-body">
+                <div class="scard-title">Record a run</div>
+                <div class="scard-desc" id="benchStatus">Record a baseline, change one thing, then record after</div>
+              </div>
+              <div class="scard-control">
+                <button class="fbtn accent" id="benchBaseline">Record baseline</button>
+                <button class="fbtn" id="benchAfter" disabled>Record after</button>
+              </div>
+            </div>
           </div>
-          <div class="bench-actions">
-            <button class="btn primary" id="benchBaseline">● Record Baseline</button>
-            <button class="btn primary" id="benchAfter" disabled>● Record "After"</button>
-            <span class="bench-status" id="benchStatus"></span>
-          </div>
-        </div>
-        <div class="bench-results" id="benchResults"></div>
-        <div class="metric-legend card">
-          <h3>What these mean</h3>
-          <ul>
-            <li><b>Average FPS</b> — overall smoothness. Higher is better.</li>
-            <li><b>1% Low</b> — the average of your slowest 1% of frames. This is what stutter <i>feels</i> like; raising it matters more than average.</li>
-            <li><b>0.1% Low</b> — worst-case hitching. Big gaps here = noticeable freezes.</li>
-            <li><b>Stutter (frametime σ)</b> — frame-to-frame consistency. Lower is smoother.</li>
-          </ul>
+          <div class="section-head"><h2>Results</h2></div>
+          <div id="benchResults"></div>
         </div>
       </section>
 
-      <!-- Game Focus -->
+      <!-- Game focus -->
       <section class="view" id="view-focus">
-        <div class="view-head">
-          <div><h1>Game Focus</h1><p class="sub">Close background apps that steal CPU, RAM and GPU encoder time while you play.</p></div>
-          <div class="focus-reclaim">Reclaimable: <b id="reclaimMB">–</b></div>
+        <div class="page">
+          <h1 class="page-title">Game focus</h1>
+          <div class="scard">
+            <span class="scard-icon">&#xE7FC;</span>
+            <div class="scard-body">
+              <div class="scard-title">Reclaimable memory</div>
+              <div class="scard-desc">Total RAM held by background apps that are safe to close</div>
+            </div>
+            <div class="scard-control">
+              <span class="scard-value" id="reclaimMB">&ndash;</span>
+              <button class="fbtn" id="focusRefresh"><span class="glyph">&#xE72C;</span>Rescan</button>
+              <button class="fbtn accent" id="focusClose" disabled>Close selected</button>
+            </div>
+          </div>
+          <div class="section-head"><h2>Background apps</h2></div>
+          <div class="card-list" id="focusList"><div class="empty">Scanning background apps&hellip;</div></div>
+          <p class="foot-note">None of these apps are required by Windows. They stay closed until you reopen them or reboot. System-critical processes are never listed.</p>
         </div>
-        <div class="focus-actions">
-          <button class="btn ghost" id="focusRefresh">↻ Rescan</button>
-          <button class="btn primary" id="focusClose" disabled>Close selected &amp; free RAM</button>
-        </div>
-        <div class="focus-list" id="focusList"><div class="empty">Scanning background apps…</div></div>
-        <p class="focus-foot">These apps are safe to close — none are required by Windows. They won't auto-relaunch until you reopen them (or reboot). System-critical processes are never listed.</p>
       </section>
 
       <!-- NVIDIA -->
       <section class="view" id="view-nvidia">
-        <div class="view-head">
-          <div><h1>NVIDIA Tuning</h1><p class="sub">Proven competitive driver settings — verified against your exact driver, reversible, and honest about what actually helps.</p></div>
+        <div class="page">
+          <h1 class="page-title">NVIDIA</h1>
+          <div class="card-list" id="nvStrip"><div class="empty">Loading NVIDIA state&hellip;</div></div>
+          <div id="nvReverify" style="margin-top:8px" hidden></div>
+          <div class="section-head"><h2>Profiles</h2></div>
+          <div id="nvPresets" class="card-list"></div>
+          <div id="nvHonesty" style="margin-top:16px"></div>
+          <div class="section-head"><h2>Set these in the game itself</h2></div>
+          <div class="card-list" id="nvInGame"></div>
+          <div class="section-head"><h2>Every setting</h2></div>
+          <div class="card-list">
+            <div class="scard clickable" id="nvAdvToggle" data-act="nv-open-adv" role="button" tabindex="0">
+              <span class="scard-icon">&#xE9D5;</span>
+              <div class="scard-body">
+                <div class="scard-title">All NVIDIA settings, one at a time</div>
+                <div class="scard-desc">Browse every setting one at a time and build a custom profile from any subset</div>
+              </div>
+              <span class="chev">&#xE76C;</span>
+            </div>
+          </div>
+          <div class="section-head"><h2>Cargo-cult tweaks we do not ship</h2></div>
+          <div class="card-list" id="nvPlacebo"></div>
         </div>
-        <div id="nvStrip" class="nv-strip">Loading NVIDIA state…</div>
-        <div id="nvReverify" class="nv-reverify" hidden></div>
-        <div class="section-head"><h2>Profiles</h2><span class="hint" id="nvActive"></span></div>
-        <div id="nvPresets" class="nv-preset-grid"></div>
-        <div class="nv-honesty" id="nvHonesty"></div>
-        <div class="section-head"><h2>Do this in-game</h2><span class="hint">we can't toggle these — and won't fake it</span></div>
-        <div id="nvInGame" class="nv-ingame"></div>
-        <div class="section-head"><h2 id="nvAdvHead">Advanced — every setting, fully transparent</h2><span class="hint nv-link" data-act="nv-toggle-adv" id="nvAdvToggle">show ▾</span></div>
-        <div id="nvAdvanced" class="nv-adv" hidden></div>
-        <div class="section-head"><h2>Cargo-cult tweaks we deliberately don't ship</h2><span class="hint">honesty isn't an advanced feature</span></div>
-        <div id="nvPlacebo" class="nv-placebo"></div>
       </section>
 
-      <!-- Safety -->
+      <!-- NVIDIA — every setting (sub-page of NVIDIA, Settings-style back navigation) -->
+      <section class="view" id="view-nvidia-advanced">
+        <div class="page">
+          <h1 class="page-title breadcrumb">
+            <button class="crumb" data-act="nv-close-adv">NVIDIA</button>
+            <span class="crumb-sep" aria-hidden="true">&#xE76C;</span>
+            <span class="crumb-current" id="nvAdvHead">Every setting</span>
+          </h1>
+          <div class="card-list" id="nvAdvBar"></div>
+          <div class="section-head"><h2>Settings</h2></div>
+          <div id="nvAdvanced" class="card-list"></div>
+        </div>
+      </section>
+
+      <!-- Windows health -->
+      <section class="view" id="view-health">
+        <div class="page">
+          <h1 class="page-title">Windows health</h1>
+          <div class="card-list" id="healthTop"></div>
+          <div id="healthBody"></div>
+        </div>
+      </section>
+
+      <!-- Repair -->
+      <section class="view" id="view-repair">
+        <div class="page">
+          <h1 class="page-title">Repair</h1>
+          <div class="card-list" id="repairTop"></div>
+          <div id="repairBody"></div>
+          <div class="section-head"><h2>Change ledger</h2></div>
+          <div class="card-list" id="repairLedger"></div>
+          <div class="section-head"><h2>Reinstall Windows over itself</h2></div>
+          <div id="imageRepair"></div>
+        </div>
+      </section>
+
+      <!-- Safety and recovery -->
       <section class="view" id="view-safety">
-        <div class="view-head"><div><h1>Safety &amp; Revert</h1><p class="sub">You're always in control.</p></div></div>
-        <div class="safety-grid">
-          <div class="card safety-card">
-            <h3>System Restore Point</h3>
-            <p>Create a Windows restore point before tuning. Belt-and-suspenders on top of per-tweak revert.</p>
-            <button class="btn ghost" id="btnRestorePoint">Create restore point</button>
-            <div class="mini-status" id="restoreStatus"></div>
+        <div class="page">
+          <h1 class="page-title">Safety and recovery</h1>
+          <div class="card-list">
+            <div class="scard">
+              <span class="scard-icon">&#xE777;</span>
+              <div class="scard-body">
+                <div class="scard-title">System restore point</div>
+                <div class="scard-desc">A Windows restore point taken before tuning, on top of the per-tweak revert<span id="restoreStatus"></span></div>
+              </div>
+              <div class="scard-control"><button class="fbtn" id="btnRestorePoint">Create restore point</button></div>
+            </div>
+            <div class="scard">
+              <span class="scard-icon">&#xE777;</span>
+              <div class="scard-body">
+                <div class="scard-title">Revert everything</div>
+                <div class="scard-desc">Undo every change FrameForge made, restoring each setting to its exact previous value<span id="revertAllStatus"></span></div>
+              </div>
+              <div class="scard-control"><button class="fbtn" id="btnRevertAll">Revert all tweaks</button></div>
+            </div>
+            <div class="scard" id="adminCard" hidden>
+              <span class="scard-icon">&#xE7EF;</span>
+              <div class="scard-body">
+                <div class="scard-title">Administrator access</div>
+                <div class="scard-desc">Some tweaks are system-wide and need elevation. FrameForge never applies them silently.</div>
+              </div>
+              <div class="scard-control"><button class="fbtn accent" id="btnElevate">Restart as administrator</button></div>
+            </div>
           </div>
-          <div class="card safety-card danger">
-            <h3>Revert Everything</h3>
-            <p>Undo every change FrameForge made, restoring each setting to its exact previous value.</p>
-            <button class="btn danger" id="btnRevertAll">Revert all tweaks</button>
-            <div class="mini-status" id="revertAllStatus"></div>
-          </div>
-          <div class="card safety-card admin" id="adminCard" hidden>
-            <h3>Administrator rights</h3>
-            <p>Some tweaks change system-wide settings and need elevation. FrameForge will never apply them silently without rights.</p>
-            <button class="btn primary" id="btnElevate">Restart as administrator</button>
-          </div>
-          <div class="card safety-card">
-            <h3>Our no-snake-oil pledge</h3>
-            <ul class="pledge">
-              <li>✓ Every tweak names the exact registry key / command it changes.</li>
-              <li>✓ Everything is reversible. We record prior state first.</li>
-              <li>✗ No fake "junk found", no registry "cleaning", no placebo RAM boosters.</li>
-              <li>✓ Effects you can measure yourself on the Benchmark tab.</li>
-            </ul>
+          <div class="section-head"><h2>What FrameForge will and will not do</h2></div>
+          <div class="card-list">
+            <div class="scard">
+              <span class="scard-icon">&#xE9D5;</span>
+              <div class="scard-body">
+                <div class="scard-title">Every change is documented</div>
+                <div class="scard-desc">Each tweak and repair names the exact registry key, service, or command it runs, with its source.</div>
+              </div>
+              <div class="scard-control"><span class="status good"><span class="glyph">&#xE73E;</span>Always</span></div>
+            </div>
+            <div class="scard">
+              <span class="scard-icon">&#xE777;</span>
+              <div class="scard-body">
+                <div class="scard-title">Prior state is captured before anything changes</div>
+                <div class="scard-desc">Undo restores the value that was actually there, not one we assume is the default.</div>
+              </div>
+              <div class="scard-control"><span class="status good"><span class="glyph">&#xE73E;</span>Always</span></div>
+            </div>
+            <div class="scard">
+              <span class="scard-icon">&#xEC4A;</span>
+              <div class="scard-body">
+                <div class="scard-title">Effects are measured, not asserted</div>
+                <div class="scard-desc">Real frametimes before and after; a change inside run-to-run noise is reported as no change.</div>
+              </div>
+              <div class="scard-control"><span class="status good"><span class="glyph">&#xE73E;</span>Always</span></div>
+            </div>
+            <div class="scard">
+              <span class="scard-icon">&#xE7BA;</span>
+              <div class="scard-body">
+                <div class="scard-title">No invented problems and no placebo cleanup</div>
+                <div class="scard-desc">No fabricated "junk found" counts, no registry cleaning, no RAM optimizers. "Nothing is broken here" is a real result.</div>
+              </div>
+              <div class="scard-control"><span class="status crit"><span class="glyph">&#xE711;</span>Never</span></div>
+            </div>
           </div>
         </div>
       </section>
