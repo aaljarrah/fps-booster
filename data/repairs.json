@@ -1,37 +1,46 @@
 {
-  "schemaVersion": 2,
-  "note": "Repair catalog for engine/repair.ps1. Doctrine: every repair is detect -> fix -> verify, where detect and verify are the SAME read-only probe (engine/health.ps1, or a local read-only check for categories health.ps1 does not cover). A repair refuses to run when detection says the subsystem is healthy AND when detection FAILED (a broken probe is not permission to fix blind) — both overridable with -Force. whatItRuns lists the exact commands, honestly, and is positionally identical — LINE BY LINE, as text — to the step commands the engine emits for a DEFAULT invocation (no -SourcePath, -DnsProvider at its default). 'repair.ps1 -Action selftest' enforces exactly that and nothing weaker: it builds every step list, normalises only tokens whose value legitimately varies per machine or per run (%SystemRoot% / %ProgramData% / %TEMP% and their expansions, matched case-insensitively; the backup <timestamp>; runs of whitespace), and then compares character-for-character, case-sensitively. selftest prints the normalisation rules it applied in whatItRunsIntegrity.normalization, and any divergence is listed with both texts and fails the test. It used to compare command COUNTS only, which is why eleven repairs had drifted; a matching count is no longer a pass. Non-default switches change what runs (correctly — -SourcePath adds /Source /LimitAccess, -DnsProvider selects a different resolver pair), and 'repair.ps1 -Action preflight' renders those exact commands. reversible=false repairs record what was renamed/moved in data/state/repairs-ledger.json (renames use .bak-<timestamp> names, moves go to data/state/backups/, so manual recovery stays possible). restorePoint='enforced' means a System Restore checkpoint is created as the FIRST step and the repair ABORTS if it cannot be created; -NoRestorePoint is the explicit opt-out. Unlike WinUtil, NOTHING in this catalog deletes Policies hives, GroupPolicy folders, or runs secedit.",
+  "schemaVersion": 3,
+  "note": "Repair catalog for engine/repair.ps1. Doctrine: every repair is detect -> fix -> verify, where detect and verify are the SAME read-only probe (engine/health.ps1, or a local read-only check for categories health.ps1 does not cover). A repair refuses to run when detection says the subsystem is healthy AND when detection FAILED (a broken probe is not permission to fix blind) — both overridable with -Force. whatItRuns lists the exact commands, honestly, and is positionally identical — LINE BY LINE, as text — to the step commands the engine emits for a DEFAULT invocation (no -SourcePath, -DnsProvider at its default). 'repair.ps1 -Action selftest' enforces exactly that and nothing weaker: it builds every step list, normalises only tokens whose value legitimately varies per machine or per run (%SystemRoot% / %ProgramData% / %TEMP% and their expansions, matched case-insensitively; the backup <timestamp>; runs of whitespace), and then compares character-for-character, case-sensitively. selftest prints the normalisation rules it applied in whatItRunsIntegrity.normalization, and any divergence is listed with both texts and fails the test. It used to compare command COUNTS only, which is why eleven repairs had drifted; a matching count is no longer a pass. Non-default switches change what runs (correctly — -SourcePath adds /Source /LimitAccess, -DnsProvider selects a different resolver pair), and 'repair.ps1 -Action preflight' renders those exact commands. reversible=false repairs record what was renamed/moved in the repair ledger (renames use .bak-<timestamp> names, moves go to the backups folder beside it, so manual recovery stays possible) — see stateLocationNote for where that is and why it is NOT in the install tree. restorePoint='enforced' means a System Restore checkpoint is created as the FIRST step and the repair ABORTS if it cannot be created; -NoRestorePoint is the explicit opt-out. Unlike WinUtil, NOTHING in this catalog deletes Policies hives, GroupPolicy folders, or runs secedit.",
   "regsvr32Note": "WinUtil's Windows Update reset re-registers 36 DLLs with regsvr32 (atl, urlmon, mshtml, wuapi, wuaueng, qmgr, ...). FrameForge deliberately does NOT: that block is a Windows XP/Vista-era ritual for a servicing stack that no longer exists. On Windows 10/11 those components are registered by the component store (WinSxS) and protected by Windows Resource Protection; regsvr32 against them either no-ops or fails, and the real fix for a genuinely broken registration is DISM/SFC, which this catalog offers directly (dism-restorehealth). Running 36 pointless regsvr32 calls to look thorough would be exactly the placebo behaviour FrameForge exists to avoid.",
   "restorePointNote": "winutil-dissection.md section 8 names 'enforced restore points' as a beatable dimension: WinUtil's restore point is an opt-in checkbox in a tweak list. Here it is enforced-by-default for every aggressive-tier repair plus winsock-reset, created BEFORE the first mutation, recorded in the ledger with its sequence number, and surfaced in preflight. If System Protection is off and the checkpoint cannot be created, the repair aborts instead of running unprotected. The checkpoint step has to bypass Windows' once-per-24h restore-point throttle (SystemRestorePointCreationFrequency=0) to be sure it actually gets a checkpoint — and that bypass is TEMPORARY: the prior value, or the fact that the value did not exist, is captured first and put back in a finally block, so it is restored even when Checkpoint-Computer itself fails. Both the set and the restore appear in the run's mutation record, and a restore that fails is reported loudly instead of swallowed. Leaving that value at 0 behind would be a permanent, system-wide change made by the one step whose entire purpose is safety.",
   "resultFieldsNote": "A run's result object reports stepsCompleted (every step that counts ran without error), verified (the same read-only probe that detected the problem now reports healthy), and addressed (both — the only one of the three that means the problem is gone). 'fixed' is retained as a DEPRECATED alias of stepsCompleted for the existing UI renderer and must not be read by new code: steps completing is not the same as the finding being resolved. spooler-clear-queue is the worked example — it claims the printer-error-state finding, but a printer that is simply Offline is not something clearing the spool queue can fix, so every step can succeed while the printer stays offline. verified is what catches that.",
   "optionalFeaturesNote": "WinUtil's Features tab (winutil-dissection.md section 3.8) installs a mixed bag of Windows optional features. FrameForge implements the ones that are genuinely REPAIR-shaped — where the symptom is 'this application will not start' and enabling the feature is the fix: enable-netfx3 (.NET Framework 3.5, which carries 2.0 and 3.0), enable-netfx4-advsrvs (.NET Framework 4.x advanced services / WCF activation), and enable-directplay (the legacy DirectPlay runtime a lot of pre-2010 games still call). Each has real detection (Get-WindowsOptionalFeature -Online), captures the exact prior State, and has a real undo (Disable-WindowsOptionalFeature, with -Remove when the captured state was DisabledWithPayloadRemoved). DELIBERATELY NOT DONE, with reasons rather than silence: Hyper-V (Microsoft-Hyper-V-All), WSL (VirtualMachinePlatform + Microsoft-Windows-Subsystem-Linux), Windows Sandbox (Containers-DisposableClientVM) and the NFS client are capability ADDITIONS, not repairs — nothing is broken before you enable them, there is no fault to detect and nothing to verify afterwards, and Hyper-V in particular silently changes how the machine boots (it turns on the hypervisor, which measurably affects games and is a thing FrameForge would then have to argue about). Windows Media Player / MediaPlayback / LegacyComponents beyond DirectPlay are likewise preferences, not faults. WinUtil's daily registry-backup task (EnablePeriodicBackup=1, BackupCount=2, a scheduled task firing RegIdleBackup at 00:30) is a preventive configuration change that installs a permanent scheduled task and grows the registry backup set forever — a defensible thing to want, but it repairs nothing and FrameForge does not install standing tasks on a machine to fix a problem that has not happened. WinUtil's legacy F8 boot menu (bcdedit /set bootmenupolicy legacy) is a boot-configuration preference; FrameForge does not write BCD, because a mistake there costs a boot rather than a setting. If any of these is wanted, Windows' own 'Turn Windows features on or off' is the right place, and saying so is more honest than shipping buttons that pretend a missing feature was a fault.",
+  "probeDepthNote": "PROBE DEPTH, AND WHAT THE DEEP PROBE COSTS. `probeDeep: true` on a repair tells repair.ps1 to detect (and verify) that repair with health.ps1's DEEP probe for its category instead of the fast one. It is set where the fast probe structurally cannot see the fault the repair fixes. On system-files the fast probe reads only the component store's corruption FLAG (Repair-WindowsImage -CheckHealth reports what an earlier servicing operation RECORDED; it does not scan) plus the pending-reboot key, while the findings sfc-scannow, dism-restorehealth and wu-repair-reinstall key on - 'sfc-verify-violations' and 'component-store-scanhealth' - are emitted ONLY by the deep probe (sfc /verifyonly and DISM ScanHealth). Without probeDeep those three were detected by a probe that could never observe their signal: renaming a WinSxS payload file sets no flag, CheckHealth answers Healthy, and detection reported 'nothing is broken here' about corruption that was really there - doctrine rule 2's worst case, in the function that decides whether a repair runs at all. All three now declare probeDeep, so detection can actually see the fault the repair fixes. THE COST IS REAL AND IS NOT HIDDEN: the deep system-files probe runs sfc /verifyonly and DISM ScanHealth, which take minutes (roughly 2-10 on a healthy machine, longer on a slow disk) and need administrator rights - so 'repair.ps1 -Action preflight' and '-Action run' on these three repairs spend that time BEFORE anything is executed, and unelevated they report needs-admin rather than a verdict. '-Action list' deliberately does NOT pay it: listing always probes shallow and reports state 'indeterminate' with reason 'shallow-probe' for any repair marked probeDeep, so the ladder stays browsable in a second and the deciding probe runs only when you ask for that repair. Deep probes are still strictly read-only - they measure, they never repair. The same field is set on chkdsk-spotfix and chkdsk-full-repair (deep disk probe: an online chkdsk scan) and on component-cleanup and component-cleanup-resetbase (deep disk-space probe: DISM AnalyzeComponentStore). DETECTION THAT NEEDS ELEVATION (`detectionNeedsAdmin`). The same three repairs also declare detectionNeedsAdmin: true, because every finding they key on - component-store-corrupt, component-store-scanhealth and sfc-verify-violations - is emitted inside an `if ($IsAdmin)` branch of health.ps1's system-files probe. Unelevated, that probe still returns a status (a pending servicing reboot alone makes it 'warning'), and health.ps1's status rank puts warning above needs-admin, so the fact that the component-store check never ran was invisible to the repair engine: detection graded these repairs 'healthy' while quoting the sentence 'the component-store corruption check needs administrator rights; only the pending-reboot key was checked'. With the field set, a would-be healthy verdict from an unelevated run becomes indeterminate with reason 'needs-admin' - 'elevate me and I will know', never 'nothing is broken here'. It changes nothing when FrameForge is elevated, and it never downgrades a fault that was visible anyway.",
   "repairs": [
     {
       "id": "wu-reset",
       "name": "Reset the Windows Update stack (scoped)",
       "category": "windows-update",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "windows-update",
-      "relevantFindings": ["wu-failure-events", "wu-history-failures", "wu-stale", "wu-service-disabled"],
+      "relevantFindings": [
+        "wu-failure-events",
+        "wu-history-failures",
+        "wu-stale",
+        "wu-service-disabled"
+      ],
       "summary": "The Microsoft-documented Windows Update component reset: re-enable disabled pipeline services, drain the BITS queue, stop the services, rename the update caches, clear a stale WinHTTP proxy and dead WSUS pinning, restart, rescan.",
-      "details": "Restores the documented start type of any update-pipeline service that is DISABLED (wuauserv, BITS, CryptSvc, MSIServer, AppIDSvc, Delivery Optimization, Update Orchestrator) — a disabled service is already stopped, so without this step the whole reset is theatre and the repair would report success while changing nothing. AppIDSvc (and occasionally others) is a protected service that refuses Set-Service outright, so there is a documented second mechanism for that case only: writing the Start value directly under HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name> (2 = Automatic, 3 = Manual). It is used ONLY when Set-Service has already been refused on a service detection found Disabled, the prior start type is captured either way, and the step result says which mechanism was used per service. Then: removes stuck BITS transfer jobs, stops the pipeline, moves the BITS queue database (qmgr*.dat) aside, renames SoftwareDistribution and catroot2 to timestamped .bak names (never deletes them), resets the WinHTTP proxy (a stale one is a very common cause of updates hanging at 0%), removes WSUS client-identity values that pin the machine to a dead update server, restarts the services, and triggers a new scan with UsoClient. Deliberately SCOPED: unlike WinUtil's version it never deletes Policies registry hives, never removes GroupPolicy folders, never runs secedit, and never runs the obsolete 36-DLL regsvr32 block (see regsvr32Note). Service start types, WinHTTP proxy, WSUS identity values, BITS queue files, and cache-folder state are all captured to the ledger before anything changes.",
+      "details": "Restores the documented start type of any update-pipeline service that is DISABLED (wuauserv, BITS, CryptSvc, MSIServer, AppIDSvc, Delivery Optimization, Update Orchestrator) — a disabled service is already stopped, so without this step the whole reset is theatre and the repair would report success while changing nothing. AppIDSvc (and occasionally others) is a protected service that refuses Set-Service outright, so there is a documented second mechanism for that case only: writing the Start value directly under HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name> (2 = Automatic, 3 = Manual). It is used ONLY when Set-Service has already been refused on a service detection found Disabled, the prior start type is captured either way, and the step result says which mechanism was used per service. Then: removes stuck BITS transfer jobs, stops the pipeline, moves the BITS queue database (qmgr*.dat) aside, renames SoftwareDistribution and catroot2 to timestamped .bak names (never deletes them), resets the WinHTTP proxy (a stale one is a very common cause of updates hanging at 0%), removes WSUS client-identity values that pin the machine to a dead update server (only when no live WUServer policy is set — see managedMachineNote), restarts the services, and triggers a new scan with UsoClient, checking its exit code and falling back to Microsoft.Update.AutoUpdate.DetectNow() when the verb is refused or missing on this build, so a scan that could not be triggered is reported as such instead of claimed. Deliberately SCOPED: unlike WinUtil's version it never deletes Policies registry hives, never removes GroupPolicy folders, never runs secedit, and never runs the obsolete 36-DLL regsvr32 block (see regsvr32Note). Service start types, WinHTTP proxy, WSUS identity values, BITS queue files, and cache-folder state are all captured to the ledger before anything changes. A service in this set that is NOT PRESENT AT ALL fails the re-enable step rather than being noted in passing: these are core Windows client services, FrameForge cannot read or restore a start type for a service that does not exist, and a step that reports success for something it never measured is exactly what doctrine rule 2 forbids. The rest of the reset still runs; the run is simply reported as not completed.",
       "whatItRuns": [
         "Set-Service -StartupType <documented default> on any DISABLED service among: wuauserv=Manual, bits=Manual, cryptSvc=Automatic, msiserver=Manual, appidsvc=Manual, DoSvc=Automatic, UsoSvc=Automatic  (prior start type captured to the ledger; enabled services are left alone). Fallback when Set-Service is refused on a PROTECTED service (appidsvc is the usual one): Set-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\<name>' -Name Start -Value <2=Automatic|3=Manual> -Type DWord",
         "Get-BitsTransfer -AllUsers | Remove-BitsTransfer",
         "Stop-Service -Name wuauserv, cryptSvc, bits, msiserver, appidsvc -Force",
-        "Move-Item %ALLUSERSPROFILE%\\Microsoft\\Network\\Downloader\\qmgr*.dat -> data\\state\\backups\\bits-queue-<timestamp>\\  (moved, not deleted)",
-        "Rename-Item C:\\Windows\\SoftwareDistribution -> SoftwareDistribution.bak-<timestamp>",
-        "Rename-Item C:\\Windows\\System32\\catroot2 -> catroot2.bak-<timestamp>",
-        "netsh winhttp reset proxy   (current setting captured via \"netsh winhttp show proxy\" in the ledger before-state)",
-        "Remove-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate' -Name AccountDomainSid, PingID, SusClientId, SusClientIdValidation  (prior values captured to the ledger)",
+        "Move-Item %ALLUSERSPROFILE%\\Microsoft\\Network\\Downloader\\qmgr*.dat -> %LOCALAPPDATA%\\FrameForge\\state\\backups\\bits-queue-<timestamp>\\  (moved, not deleted)",
+        "Rename-Item %SystemRoot%\\SoftwareDistribution -> SoftwareDistribution.bak-<timestamp>",
+        "Rename-Item %SystemRoot%\\System32\\catroot2 -> catroot2.bak-<timestamp>",
+        "netsh winhttp reset proxy   (current setting captured via \"netsh winhttp show proxy\" in the ledger before-state; SKIPPED without running when this machine is WSUS-pinned, MDM-enrolled or domain-joined AND a proxy is actually configured — on a managed network clearing it cuts the machine off from updates rather than fixing them, and this repair is reversible:false so there would be no automatic way back)",
+        "Remove-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate' -Name AccountDomainSid, PingID, SusClientId, SusClientIdValidation  (prior values captured to the ledger; NOT run when HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\WUServer pins this machine to a live WSUS server — removing a managed client's identity is an administrator action, not a user one)",
         "Start-Service on each service this run stopped, plus any this run re-enabled from Disabled",
-        "UsoClient.exe StartScan"
+        "UsoClient.exe StartScan   (exit code checked, not discarded; when the verb is refused or missing on this build, (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow() is used instead, and a scan that could not be triggered at all is reported as such)"
       ],
       "tier": "standard",
       "restorePoint": "none",
       "reversible": false,
       "requiresAdmin": true,
       "requiresReboot": false,
-      "risks": "Update history display is cleared and any partially downloaded updates are downloaded again. Pending BITS transfers (including background app updates) are cancelled. If a WinHTTP proxy was configured for this machine it is cleared — the previous setting is recorded in the ledger and can be re-applied with 'netsh winhttp set proxy'. On a machine managed by a WSUS server, removing the client identity makes it re-register on the next scan; the prior values are recorded. The old cache folders and BITS queue files are renamed/moved (paths recorded in the ledger), not deleted, so manual recovery is possible. Group Policy, service ACLs, and unrelated settings are never touched.",
+      "risks": "Update history display is cleared and any partially downloaded updates are downloaded again. Pending BITS transfers (including background app updates) are cancelled. On an UNMANAGED machine a configured WinHTTP proxy is cleared; the previous setting is recorded both in the ledger before-state and in the step's own mutation record, and because this repair is reversible:false there is NO automatic undo — re-apply it by hand with 'netsh winhttp set proxy \"<recorded value>\"'. On an unmanaged machine the WSUS client-identity values (left behind by a previous domain or a dead WSUS server) are removed and the client re-registers with Microsoft on the next scan; the prior values are recorded. The old cache folders and BITS queue files are renamed/moved (paths recorded in the ledger), not deleted, so manual recovery is possible. Group Policy, service ACLs, and unrelated settings are never touched. MANAGED MACHINES: if this machine is pinned to a WSUS server by Group Policy, is MDM-enrolled, or is domain-joined, the WinHTTP proxy reset and the WSUS client-identity removal are SKIPPED rather than executed, and each step says so by name — clearing a mandatory proxy would cut a managed PC off from updates, and removing a managed client's identity is an administrator action. When the update policy key cannot be read at all, both steps take the same cautious branch instead of guessing. 'repair.ps1 -Action preflight' shows the detected management state before you run anything.",
       "sources": [
         "https://learn.microsoft.com/troubleshoot/windows-client/installing-updates-features-roles/additional-resources-for-windows-update",
         "docs/research/repair-ladder.md#21-windows-update-stuck--failing",
@@ -43,10 +52,18 @@
       "id": "wu-reset-aggressive",
       "name": "Reset the Windows Update stack (aggressive: + service security descriptors)",
       "category": "windows-update",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "windows-update",
-      "relevantFindings": ["wu-failure-events", "wu-history-failures", "wu-stale", "wu-service-disabled"],
+      "relevantFindings": [
+        "wu-failure-events",
+        "wu-history-failures",
+        "wu-stale",
+        "wu-service-disabled"
+      ],
       "summary": "Everything wu-reset does, plus restoring the default security descriptors on wuauserv and BITS — behind an enforced System Restore checkpoint. Last resort before an in-place repair.",
-      "details": "Creates a System Restore checkpoint FIRST (and aborts if it cannot), then runs the same scoped reset as wu-reset, and additionally resets the security descriptors of the wuauserv and bits services to the Microsoft-documented defaults with sc.exe sdset. This fixes the rare case where broken service ACLs (from malware cleanup or a bad tool) block the update stack. The CURRENT descriptors are captured with 'sc.exe sdshow' into the ledger before-state before they are overwritten, so they can be manually restored — WinUtil captures nothing. Still never touches Group Policy: no Policies hive deletion, no GroupPolicy folder removal, no secedit.",
+      "details": "Creates a System Restore checkpoint FIRST (and aborts if it cannot), then runs the same scoped reset as wu-reset (including its managed-machine gating: on a WSUS-pinned, MDM-enrolled or domain-joined PC the WinHTTP proxy reset and the WSUS client-identity removal are skipped rather than executed, and the update-scan trigger checks its exit code and falls back to Microsoft.Update.AutoUpdate.DetectNow()), and additionally resets the security descriptors of the wuauserv and bits services to the Microsoft-documented defaults with sc.exe sdset. This fixes the rare case where broken service ACLs (from malware cleanup or a bad tool) block the update stack. The CURRENT descriptors are captured with 'sc.exe sdshow' into the ledger before-state before they are overwritten, so they can be manually restored — WinUtil captures nothing. Still never touches Group Policy: no Policies hive deletion, no GroupPolicy folder removal, no secedit. A service in this set that is NOT PRESENT AT ALL fails the re-enable step rather than being noted in passing: these are core Windows client services, FrameForge cannot read or restore a start type for a service that does not exist, and a step that reports success for something it never measured is exactly what doctrine rule 2 forbids. The rest of the reset still runs; the run is simply reported as not completed.",
       "whatItRuns": [
         "Enable-ComputerRestore -Drive \"%SystemDrive%\\\"",
         "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value 0 -PropertyType DWord -Force  (TEMPORARY: bypasses the once-per-24h throttle; the prior value — or its absence — is captured first)",
@@ -55,22 +72,22 @@
         "Set-Service -StartupType <documented default> on any DISABLED service among: wuauserv=Manual, bits=Manual, cryptSvc=Automatic, msiserver=Manual, appidsvc=Manual, DoSvc=Automatic, UsoSvc=Automatic  (prior start type captured to the ledger; enabled services are left alone). Fallback when Set-Service is refused on a PROTECTED service (appidsvc is the usual one): Set-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\<name>' -Name Start -Value <2=Automatic|3=Manual> -Type DWord",
         "Get-BitsTransfer -AllUsers | Remove-BitsTransfer",
         "Stop-Service -Name wuauserv, cryptSvc, bits, msiserver, appidsvc -Force",
-        "Move-Item %ALLUSERSPROFILE%\\Microsoft\\Network\\Downloader\\qmgr*.dat -> data\\state\\backups\\bits-queue-<timestamp>\\  (moved, not deleted)",
-        "Rename-Item C:\\Windows\\SoftwareDistribution -> SoftwareDistribution.bak-<timestamp>",
-        "Rename-Item C:\\Windows\\System32\\catroot2 -> catroot2.bak-<timestamp>",
-        "netsh winhttp reset proxy   (current setting captured via \"netsh winhttp show proxy\" in the ledger before-state)",
-        "Remove-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate' -Name AccountDomainSid, PingID, SusClientId, SusClientIdValidation  (prior values captured to the ledger)",
+        "Move-Item %ALLUSERSPROFILE%\\Microsoft\\Network\\Downloader\\qmgr*.dat -> %LOCALAPPDATA%\\FrameForge\\state\\backups\\bits-queue-<timestamp>\\  (moved, not deleted)",
+        "Rename-Item %SystemRoot%\\SoftwareDistribution -> SoftwareDistribution.bak-<timestamp>",
+        "Rename-Item %SystemRoot%\\System32\\catroot2 -> catroot2.bak-<timestamp>",
+        "netsh winhttp reset proxy   (current setting captured via \"netsh winhttp show proxy\" in the ledger before-state; SKIPPED without running when this machine is WSUS-pinned, MDM-enrolled or domain-joined AND a proxy is actually configured — on a managed network clearing it cuts the machine off from updates rather than fixing them, and this repair is reversible:false so there would be no automatic way back)",
+        "Remove-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate' -Name AccountDomainSid, PingID, SusClientId, SusClientIdValidation  (prior values captured to the ledger; NOT run when HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate\\WUServer pins this machine to a live WSUS server — removing a managed client's identity is an administrator action, not a user one)",
         "sc.exe sdset wuauserv \"D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)\"",
         "sc.exe sdset bits \"D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)(A;;CCLCSWRPWPDTLOCRRC;;;PU)\"",
         "Start-Service on each service this run stopped, plus any this run re-enabled from Disabled",
-        "UsoClient.exe StartScan"
+        "UsoClient.exe StartScan   (exit code checked, not discarded; when the verb is refused or missing on this build, (New-Object -ComObject Microsoft.Update.AutoUpdate).DetectNow() is used instead, and a scan that could not be triggered at all is reported as such)"
       ],
       "tier": "aggressive",
       "restorePoint": "enforced",
       "reversible": false,
       "requiresAdmin": true,
       "requiresReboot": false,
-      "risks": "Overwrites the service ACLs of wuauserv and BITS with the documented defaults — a last resort. If an administrator had intentionally customized those ACLs, that customization is lost; the prior descriptors are recorded in the ledger (sdshow output) for manual restore via 'sc.exe sdset <service> <recorded SD>'. A System Restore checkpoint is created first and the repair refuses to run if it cannot be. Everything in the wu-reset risk note also applies.",
+      "risks": "Overwrites the service ACLs of wuauserv and BITS with the documented defaults — a last resort. If an administrator had intentionally customized those ACLs, that customization is lost; the prior descriptors are recorded in the ledger (sdshow output) for manual restore via 'sc.exe sdset <service> <recorded SD>'. A System Restore checkpoint is created first and the repair refuses to run if it cannot be. Everything in the wu-reset risk note also applies, including its MANAGED MACHINES paragraph.",
       "sources": [
         "https://learn.microsoft.com/troubleshoot/windows-client/installing-updates-features-roles/additional-resources-for-windows-update",
         "docs/research/winutil-dissection.md#31-windows-update-reset"
@@ -81,56 +98,113 @@
       "id": "dism-restorehealth",
       "name": "Repair the component store (DISM RestoreHealth, then SFC)",
       "category": "system-files",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "system-files",
-      "relevantFindings": ["component-store-corrupt", "component-store-scanhealth", "sfc-verify-violations"],
+      "probeDeep": true,
+      "detectionNeedsAdmin": true,
+      "relevantFindings": [
+        "component-store-corrupt",
+        "component-store-scanhealth",
+        "sfc-verify-violations"
+      ],
       "summary": "Repairs the Windows component store with DISM, then runs SFC — in that order, because SFC repairs files FROM the store DISM just fixed.",
-      "details": "Runs DISM /RestoreHealth (sourcing repair files from Windows Update by default), then chains sfc /scannow. The DISM-before-SFC ordering is the 2025-era consensus: SFC copies known-good files out of the component store (WinSxS), so a corrupt store must be repaired first — WinUtil runs SFC first and never re-runs it. When Windows Update itself is broken (error 0x800f081f), pass -SourcePath pointing at the install.wim or install.esd of a mounted ISO of the same build/edition; the engine then adds /Source:WIM|ESD:<path>:<index> /LimitAccess so DISM cannot fall back to broken WU. Append :<index> to the path to select an edition (defaults to 1).",
+      "details": "Runs DISM /RestoreHealth (sourcing repair files from Windows Update by default), then chains sfc /scannow. The DISM-before-SFC ordering is the 2025-era consensus: SFC copies known-good files out of the component store (WinSxS), so a corrupt store must be repaired first — WinUtil runs SFC first and never re-runs it. When Windows Update itself is broken (error 0x800f081f), pass -SourcePath pointing at the install.wim or install.esd of a mounted ISO of the same build/edition; the engine then adds /Source:WIM|ESD:<path>:<index> /LimitAccess so DISM cannot fall back to broken WU. Append :<index> to the path to select an edition (defaults to 1). DISM is invoked with /English: its console output is MUI-localized, and both the success sentence quoted back to the user and the failure tail written to the ledger are English by construction, so without it they are dead text on a localized install. /English changes the output language only, never the operation or the exit code. The SFC pass that follows is graded ONLY from CBS.log [SR] lines written at or after that scan started — a 'Verify complete' left over from an earlier scan can no longer grade this one.",
       "whatItRuns": [
-        "Dism.exe /Online /Cleanup-Image /RestoreHealth  [+ /Source:WIM:<path>:<index> /LimitAccess  or  /Source:ESD:<path>:<index> /LimitAccess  when -SourcePath is given]",
-        "sfc.exe /scannow"
+        "Dism.exe /English /Online /Cleanup-Image /RestoreHealth  [+ /Source:WIM:<path>:<index> /LimitAccess  or  /Source:ESD:<path>:<index> /LimitAccess  when -SourcePath is given]",
+        "sfc.exe /scannow   (outcome decided by exit code, then the [SR] markers written to %SystemRoot%\\Logs\\CBS\\CBS.log AT OR AFTER this scan started, then sfc's English console text — an outcome that none of those can establish is reported as indeterminate, never as success)"
       ],
       "tier": "standard",
       "restorePoint": "none",
       "reversible": false,
       "requiresAdmin": true,
       "requiresReboot": true,
-      "risks": "Long-running (typically 10-30 minutes total). Replaces corrupt system files with canonical Microsoft-signed copies — there is no user state to restore, which is why no undo exists and why no restore point is created (System Restore does not snapshot WinSxS payloads in a way that would help here). Some repairs only complete at the next boot; a reboot afterwards is recommended. Without -SourcePath it downloads from Windows Update. Logs: C:\\Windows\\Logs\\DISM\\dism.log and C:\\Windows\\Logs\\CBS\\CBS.log.",
+      "risks": "Long-running (typically 10-30 minutes total). Replaces corrupt system files with canonical Microsoft-signed copies — there is no user state to restore, which is why no undo exists and why no restore point is created (System Restore does not snapshot WinSxS payloads in a way that would help here). Some repairs only complete at the next boot; a reboot afterwards is recommended. Without -SourcePath it downloads from Windows Update. Logs: %SystemRoot%\\Logs\\DISM\\dism.log and %SystemRoot%\\Logs\\CBS\\CBS.log.",
       "sources": [
         "https://learn.microsoft.com/windows-hardware/manufacture/desktop/repair-a-windows-image",
         "https://memstechtips.com/sfc-scannow-dism-repair-order-windows-11/",
         "docs/research/repair-ladder.md#rung-1--dism-component-store-repair"
       ],
-      "verifyAfter": "The system-files probe is re-run (Repair-WindowsImage -CheckHealth corruption flag), and both tools' own result texts are parsed and reported verbatim. 'SFC found corrupt files but was unable to fix some of them' is reported as NOT fixed, with the advice to re-run with -SourcePath."
+      "verifyAfter": "The system-files probe is re-run (Repair-WindowsImage -CheckHealth corruption flag), and both tools' own result texts are parsed and reported verbatim. 'SFC found corrupt files but was unable to fix some of them' is reported as NOT fixed, with the advice to re-run with -SourcePath. The appended SFC step's outcome is established by exit code, then sfc's English console text, then the CBS.log [SR] markers; an outcome no rung can establish marks the run NOT completed rather than succeeded."
     },
     {
       "id": "sfc-scannow",
       "name": "System File Checker (standalone)",
       "category": "system-files",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "system-files",
-      "relevantFindings": ["sfc-verify-violations", "component-store-corrupt", "component-store-scanhealth"],
+      "probeDeep": true,
+      "detectionNeedsAdmin": true,
+      "relevantFindings": [
+        "sfc-verify-violations",
+        "component-store-corrupt",
+        "component-store-scanhealth"
+      ],
       "summary": "Scans all protected system files and repairs any that are corrupt, using the component store as the source.",
-      "details": "Standalone sfc /scannow. Because SFC sources its repairs from the component store, prefer the dism-restorehealth repair (which runs DISM first, then SFC) when the store itself reports corruption — running SFC against a corrupt store repairs nothing. This standalone entry exists for the case where the store is healthy but SFC verification found violations.",
+      "details": "Standalone sfc /scannow. Because SFC sources its repairs from the component store, prefer the dism-restorehealth repair (which runs DISM first, then SFC) when the store itself reports corruption — running SFC against a corrupt store repairs nothing. This standalone entry exists for the case where the store is healthy but SFC verification found violations. TIME SCOPING: the CBS.log [SR] lines are filtered to those written AT OR AFTER this scan started before anything is concluded from them. Without that filter a 'Verify complete' or a 'Cannot repair member file' from a scan weeks ago graded today's run — and on a localized Windows, where sfc's English console text never matches, the log is the deciding rung. If this scan left no attributable [SR] line, the outcome is reported as indeterminate, which counts as NOT completed.",
       "whatItRuns": [
-        "sfc.exe /scannow"
+        "sfc.exe /scannow   (outcome decided by exit code, then the [SR] markers written to %SystemRoot%\\Logs\\CBS\\CBS.log AT OR AFTER this scan started, then sfc's English console text — an outcome that none of those can establish is reported as indeterminate, never as success)"
       ],
       "tier": "standard",
       "restorePoint": "none",
       "reversible": false,
       "requiresAdmin": true,
       "requiresReboot": true,
-      "risks": "Takes 5-15 minutes. Replaces corrupt protected files with canonical copies from the component store; nothing user-specific is changed. Some repairs complete at the next boot. Detail log: C:\\Windows\\Logs\\CBS\\CBS.log (lines tagged [SR]).",
+      "risks": "Takes 5-15 minutes. Replaces corrupt protected files with canonical copies from the component store; nothing user-specific is changed. Some repairs complete at the next boot. Detail log: %SystemRoot%\\Logs\\CBS\\CBS.log (lines tagged [SR]) — which is also where the engine reads the outcome from when sfc's own console text is localized.",
       "sources": [
         "https://support.microsoft.com/topic/use-the-system-file-checker-tool-to-repair-missing-or-corrupted-system-files-79aa86cb-ca52-166a-92a3-966e85d4094e",
         "docs/research/repair-ladder.md#rung-2--sfc-after-dism"
       ],
-      "verifyAfter": "SFC's own result text is parsed ('did not find any integrity violations' / 'successfully repaired' / 'unable to fix') and the system-files probe is re-run."
+      "verifyAfter": "The outcome is established in three rungs, in order: sfc.exe's EXIT CODE; then sfc's own English console text ('did not find any integrity violations' / 'successfully repaired' / 'unable to fix'); then the [SR] markers in %SystemRoot%\\Logs\\CBS\\CBS.log ('Cannot repair member file' — unfixable, 'Repairing corrupted file' with no cannot-repair lines — repaired, 'Verify complete' with neither — clean), which the component store writes in English on every UI language. The CBS evidence lines are recorded in the run's mutations so the claim is auditable. If NO rung can decide, the result is reported as indeterminate and the run is marked NOT completed — sfc.exe exits 0 even when it reports files it could not repair, so treating an unread result as success would be claiming a repair that never happened. The system-files probe is then re-run."
+    },
+    {
+      "id": "wu-repair-reinstall",
+      "name": "Fix problems using Windows Update (guided in-place component reinstall)",
+      "category": "system-files",
+      "minBuild": 22631,
+      "maxBuild": null,
+      "generation": "win11",
+      "healthCheck": "system-files",
+      "probeDeep": true,
+      "detectionNeedsAdmin": true,
+      "relevantFindings": [
+        "sfc-verify-violations",
+        "component-store-corrupt",
+        "component-store-scanhealth"
+      ],
+      "summary": "Opens Settings > System > Recovery so you can run \"Fix problems using Windows Update\" > Reinstall now: the same component replacement as an ISO in-place repair, from Windows Update, with one reboot and no ISO. The missing rung between DISM/SFC and the full in-place repair.",
+      "details": "When dism-restorehealth and sfc-scannow cannot fix component corruption, the catalog used to jump straight to the full ISO in-place repair — 30-90 minutes, two or three reboots, a consent contract and BitLocker rails. Windows 11 23H2 (build 22631) added a much cheaper rung that does the same job: Settings > System > Recovery > \"Fix problems using Windows Update\" > Reinstall now re-downloads the CURRENT build's system files from Windows Update and replaces them in place, keeping files, apps and settings, with a single reboot and typically 20-40 minutes of work. FrameForge never mentioned it, so users on the builds where it exists were pushed up a far heavier rung than they needed. This is a GUIDED handoff, deliberately: the flow is a Settings UI action with no documented command line, so the engine opens the Recovery page and tells you exactly what to click. It does not script the click, and the run result does NOT claim the reinstall happened — it says only that the page was opened. Re-run the system-files probe after the reboot to confirm. The rung does not exist on Windows 11 21H2 (22000) or 22H2 (22621), so this entry carries minBuild 22631: on an older build it is still LISTED, with applicable:false and a reason naming the build, rather than hidden — a user who has read about the feature deserves to be told it is not on their build instead of wondering where it went.",
+      "whatItRuns": [
+        "Start-Process ms-settings:recovery   (opens Settings > System > Recovery; the user clicks \"Fix problems using Windows Update\" > Reinstall now)"
+      ],
+      "tier": "guided",
+      "restorePoint": "none",
+      "reversible": false,
+      "requiresAdmin": false,
+      "requiresReboot": true,
+      "risks": "FrameForge itself changes nothing here: it opens a Settings page. What YOU then start from that page is a real in-place component reinstall — it re-downloads several gigabytes from Windows Update, replaces the current build's system files, and reboots once. Files, apps and settings are kept, but like any in-place servicing operation it should not be interrupted, and a machine on a metered or slow connection will be busy for a while. It cannot be undone; the way back from a bad outcome is a System Restore point or a backup, which is why the heavier ISO in-place repair keeps its consent contract. On a build older than 22631 this repair refuses with errorCode 'not-applicable-on-this-build' instead of opening a page that has no such option.",
+      "sources": [
+        "https://support.microsoft.com/windows/reinstall-windows-11-with-windows-update",
+        "docs/research/repair-ladder.md",
+        "docs/research/fresh-image.md"
+      ],
+      "verifyAfter": "NOTHING is verified by the run itself, and the result says so: opening a Settings page is not a repair, and this step never reports the reinstall as done. After you complete the reinstall and the machine reboots, re-run the system-files probe (and dism-restorehealth's ScanHealth) to confirm the component store is healthy. The run's mutation record is a single 'guided-handoff' entry naming ms-settings:recovery, so the ledger cannot be mistaken for a record of a completed reinstall."
     },
     {
       "id": "chkdsk-scan",
       "name": "Scan the file system for errors (read-only)",
       "category": "disk",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "disk",
-      "relevantFindings": ["ntfs-dirty-bit", "disk-error-events"],
+      "relevantFindings": [
+        "ntfs-dirty-bit",
+        "disk-error-events"
+      ],
       "summary": "An online, read-only NTFS scan of the system drive — detects file-system damage without repairing anything and without locking the volume.",
       "details": "Runs Repair-Volume -Scan (the PowerShell form of 'chkdsk C: /scan'). Rung 0 of the repair ladder: file-system corruption undermines every repair above it, so when the disk probe reports NTFS/disk error events or a dirty bit, this runs first. It is online and read-only — the volume stays mounted, nothing is written, and the result ('NoErrorsFound' / 'ErrorsFound' / ...) decides whether chkdsk-spotfix or chkdsk-full-repair is warranted. Note what this repair honestly cannot do: it does not touch hardware findings. A failing drive (physical-disk-unhealthy) or an SSD near end of life (ssd-wear-critical) is a hardware problem no software repair fixes — the honest answer there is backup and replacement.",
       "whatItRuns": [
@@ -153,9 +227,16 @@
       "id": "chkdsk-spotfix",
       "name": "Spot-fix the file-system errors the scan found",
       "category": "disk",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "disk",
       "probeDeep": true,
-      "relevantFindings": ["ntfs-dirty-bit", "chkdsk-scan-errors", "disk-error-events"],
+      "relevantFindings": [
+        "ntfs-dirty-bit",
+        "chkdsk-scan-errors",
+        "disk-error-events"
+      ],
       "summary": "Fixes only the specific corruptions a prior scan queued — seconds to minutes, instead of the hours a full offline chkdsk takes.",
       "details": "Runs Repair-Volume -SpotFix ('chkdsk C: /spotfix'). Since Windows 8, NTFS self-healing queues detected corruptions and SpotFix repairs exactly those, so the volume is offline for seconds rather than hours. Detection uses the DEEP disk probe, whose online chkdsk scan is what queues the corruptions in the first place — detect (scan) then fix (spotfix) then verify (scan) is literally the same tool three times, which is the doctrine working as intended. On the volume Windows is running from, Windows normally defers the offline moment to the next restart; if the cmdlet reports the volume is in use, restart and re-run, or escalate to chkdsk-full-repair which schedules the offline pass explicitly.",
       "whatItRuns": [
@@ -177,9 +258,17 @@
       "id": "chkdsk-full-repair",
       "name": "Full offline disk check with bad-sector scan (next restart)",
       "category": "disk",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "disk",
       "probeDeep": true,
-      "relevantFindings": ["ntfs-dirty-bit", "chkdsk-scan-errors", "disk-error-events", "disk-media-errors"],
+      "relevantFindings": [
+        "ntfs-dirty-bit",
+        "chkdsk-scan-errors",
+        "disk-error-events",
+        "disk-media-errors"
+      ],
       "summary": "Schedules chkdsk /f /r for the next restart: a full offline file-system repair plus a sector-by-sector surface scan. Hours, not minutes.",
       "details": "Runs 'chkdsk <system drive> /f /r' and answers Y to its scheduling prompt. The volume Windows runs from can never be checked offline while Windows is running, so this ALWAYS schedules for the next restart — the check then runs before Windows starts. /f repairs the file system; /r additionally reads every sector, relocating data away from bad ones. This is the last software rung for disk problems and it is the slow one: hours on a large spinning drive, and it should not be interrupted. Cancel a scheduled check with 'chkntfs /x <drive>'. A System Restore checkpoint is created first (aggressive tier) even though System Restore cannot undo file-system repairs — it protects the rest of the machine state around a rung this heavy.",
       "whatItRuns": [
@@ -187,7 +276,7 @@
         "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value 0 -PropertyType DWord -Force  (TEMPORARY: bypasses the once-per-24h throttle; the prior value — or its absence — is captured first)",
         "Checkpoint-Computer -Description 'FrameForge: before <repair name>' -RestorePointType MODIFY_SETTINGS",
         "Set-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value <captured prior value>  — or Remove-ItemProperty when the value did not exist before. Runs in a finally block, so the throttle is put back even if Checkpoint-Computer fails.",
-        "chkdsk.exe <system drive> /f /r   (answering Y to \"schedule this volume to be checked the next time the system restarts?\" — the system volume can never be checked while Windows is running)"
+        "chkdsk.exe <system drive> /f /r   (answering Y to \"schedule this volume to be checked the next time the system restarts?\" — the system volume can never be checked while Windows is running. Whether the check was actually scheduled is then read STRUCTURALLY from HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\BootExecute and the volume dirty bit, not from chkdsk's output text)"
       ],
       "tier": "aggressive",
       "restorePoint": "enforced",
@@ -199,14 +288,21 @@
         "https://learn.microsoft.com/windows-server/administration/windows-commands/chkdsk",
         "docs/research/repair-ladder.md#rung-0--chkdsk-disk-integrity-first-if-disk-is-suspect"
       ],
-      "verifyAfter": "Nothing is verifiable until after the restart: the run result says only that the check was scheduled, never that the disk was repaired. After the restart the deep disk probe is re-run (dirty bit, online scan, drive health) and the boot-time chkdsk result is in the Application log under source 'Chkdsk' / 'Wininit' (event 1001)."
+      "verifyAfter": "Nothing is verifiable until after the restart: the run result says only whether the check was SCHEDULED, never that the disk was repaired. Whether it was scheduled is read structurally — HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\BootExecute is captured before the command and re-read after, and a new autocheck entry naming this volume is the proof (the default 'autocheck autochk *' entry means nothing on its own); the volume dirty bit corroborates it. Only when BOTH of those reads succeed and both say no is it reported that nothing was scheduled; when neither can be read the step reports honestly that it could not confirm either way and points at 'chkntfs <drive>', rather than asserting that nothing will happen at the next boot. After the restart the deep disk probe is re-run (dirty bit, online scan, drive health) and the boot-time chkdsk result is in the Application log under source 'Chkdsk' / 'Wininit' (event 1001)."
     },
     {
       "id": "network-flush",
       "name": "Flush DNS and renew the DHCP lease (gentle tier)",
       "category": "network",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "network",
-      "relevantFindings": ["dns-broken", "no-default-route", "gateway-unreachable"],
+      "relevantFindings": [
+        "dns-broken",
+        "no-default-route",
+        "gateway-unreachable"
+      ],
       "summary": "Clears the DNS resolver cache and requests a fresh IP configuration — the gentle network fix to try before any stack reset.",
       "details": "ipconfig /flushdns clears stale or poisoned DNS cache entries (the canonical fix when the health probe shows the 'internet works by raw IP but names do not resolve' pattern). /release + /renew drops and re-requests the DHCP lease, fixing stale IP/gateway/DNS assignments. Current adapter configuration (IP, gateway, DNS servers per adapter) is captured to the ledger first.",
       "whatItRuns": [
@@ -230,8 +326,14 @@
       "id": "dns-change-resolver",
       "name": "Switch to a different DNS resolver",
       "category": "network",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "network",
-      "relevantFindings": ["dns-broken", "captive-portal-suspected"],
+      "relevantFindings": [
+        "dns-broken",
+        "captive-portal-suspected"
+      ],
       "summary": "Points every connected adapter at a known-good public resolver (Cloudflare by default) — the targeted fix when the internet works by raw IP but names do not resolve.",
       "details": "The network probe's discriminator is the whole point of this repair: if 1.1.1.1 answers but microsoft.com does not resolve, the problem is the resolver, not connectivity, and flushing or resetting the stack fixes nothing. This sets the DNS servers on every connected physical adapter to a chosen provider and flushes the cache. Providers (WinUtil's config/dns.json set): cloudflare (1.1.1.1 / 1.0.0.1), google (8.8.8.8 / 8.8.4.4), quad9 (9.9.9.9 / 149.112.112.112), adguard, opendns, and 'dhcp' to go back to automatic. Choose with -DnsProvider <key>. IPv6 servers are set only on adapters that actually have IPv6 bound. Fully reversible: the prior per-adapter servers — and whether they were DHCP-assigned rather than manually set, which is a distinction a naive undo gets wrong — are captured to the ledger, and undo restores exactly that.",
       "whatItRuns": [
@@ -255,17 +357,24 @@
       "id": "winsock-reset",
       "name": "Reset Winsock and the TCP/IP stack",
       "category": "network",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "network",
-      "relevantFindings": ["dns-broken", "no-default-route", "gateway-unreachable"],
+      "relevantFindings": [
+        "dns-broken",
+        "no-default-route",
+        "gateway-unreachable"
+      ],
       "summary": "Resets the Winsock catalog and the IP stack to install defaults — the escalation when flushing, renewing, and changing resolver did not help.",
-      "details": "netsh winsock reset rebuilds the Winsock catalog, removing broken Layered Service Providers left behind by VPNs, firewalls, or malware. netsh int ip reset rewrites the TCP/IP stack registry keys to defaults. Requires a reboot to fully take effect. Because the effect is a broad rewrite of networking registry state that the ledger cannot faithfully restore, a System Restore checkpoint is enforced first even though this is a standard-tier repair. Note WinUtil's standalone network fix is only these two commands; FrameForge offers the gentler network-flush and dns-change-resolver first, and captures the current adapter configuration before resetting.",
+      "details": "netsh winsock reset rebuilds the Winsock catalog, removing broken Layered Service Providers left behind by VPNs, firewalls, or malware. netsh int ip reset rewrites the TCP/IP stack registry keys to defaults; it is given an explicit log path (%LOCALAPPDATA%\\FrameForge\\state\\logs\\ip-reset-<timestamp>.log) because it normally exits NON-ZERO — 'access denied' on a handful of ACL-protected subkeys is the expected benign result — and whether it did the work is judged by the exit code plus whether that log was actually written, never by matching English words in its output. Requires a reboot to fully take effect. Because the effect is a broad rewrite of networking registry state that the ledger cannot faithfully restore, a System Restore checkpoint is enforced first even though this is a standard-tier repair. Note WinUtil's standalone network fix is only these two commands; FrameForge offers the gentler network-flush and dns-change-resolver first, and captures the current adapter configuration before resetting.",
       "whatItRuns": [
         "Enable-ComputerRestore -Drive \"%SystemDrive%\\\"",
         "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value 0 -PropertyType DWord -Force  (TEMPORARY: bypasses the once-per-24h throttle; the prior value — or its absence — is captured first)",
         "Checkpoint-Computer -Description 'FrameForge: before <repair name>' -RestorePointType MODIFY_SETTINGS",
         "Set-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value <captured prior value>  — or Remove-ItemProperty when the value did not exist before. Runs in a finally block, so the throttle is put back even if Checkpoint-Computer fails.",
         "netsh winsock reset",
-        "netsh int ip reset"
+        "netsh int ip reset \"%LOCALAPPDATA%\\FrameForge\\state\\logs\\ip-reset-<timestamp>.log\"   (an explicit log path, so a non-zero exit can be judged by whether netsh actually wrote a reset log instead of by matching English words in its output)"
       ],
       "tier": "standard",
       "restorePoint": "enforced",
@@ -277,14 +386,20 @@
         "https://www.howtogeek.com/785351/how-and-why-to-perform-a-netsh-winsock-reset-on-windows/",
         "docs/research/repair-ladder.md#22-network--dns-issues"
       ],
-      "verifyAfter": "The network probe is re-run immediately, with the honest caveat that the reset only fully applies after the reboot."
+      "verifyAfter": "The network probe is re-run immediately, with the honest caveat that the reset only fully applies after the reboot. A non-zero exit from 'netsh int ip reset' accompanied by a written reset log is reported as APPLIED WITH BENIGN WARNINGS (reboot required), not as a failure; only a non-zero exit with no log is a genuine failure. The exit code and the log path are recorded in the run's mutations either way."
     },
     {
       "id": "store-cache-reset",
       "name": "Reset the Microsoft Store cache",
       "category": "store",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "store",
-      "relevantFindings": ["store-package-broken", "appx-deploy-errors"],
+      "relevantFindings": [
+        "store-package-broken",
+        "appx-deploy-errors"
+      ],
       "summary": "Runs WSReset to clear the Store's local cache without changing account settings or installed apps.",
       "details": "WSReset.exe clears the Microsoft Store cache — the first-line fix for a Store that opens to a blank page, spins forever, or fails downloads with cache-related errors. It does not touch installed apps, licenses, or account settings. It deliberately does NOT claim to address the store-service-disabled finding: clearing a cache cannot re-enable a disabled service, and pretending otherwise is exactly the kind of false promise this catalog exists to avoid. That finding belongs to store-services-enable.",
       "whatItRuns": [
@@ -306,8 +421,13 @@
       "id": "store-services-enable",
       "name": "Re-enable the Microsoft Store's dependency services",
       "category": "store",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "store",
-      "relevantFindings": ["store-service-disabled"],
+      "relevantFindings": [
+        "store-service-disabled"
+      ],
       "summary": "Restores the documented start type of any disabled Store dependency service (AppX Deployment, Client Licensing, Install Service, Delivery Optimization) and starts it.",
       "details": "The Store cannot install, license, or update anything while its dependency services are Disabled — a state 'debloat' scripts and service-tuning guides leave behind routinely, and one that no cache reset or re-registration can recover from. This restores AppXSvc=Manual, ClipSVC=Manual, InstallService=Manual, DoSvc=Automatic, but ONLY for services detection actually found Disabled: a service an administrator deliberately set to Manual or Automatic is left exactly as it is. The prior start type of every service is captured to the ledger before the change. AppXSvc and ClipSVC are demand-started, so a direct Start-Service can be refused — that is normal and reported honestly; the restored start type is what matters.",
       "whatItRuns": [
@@ -330,8 +450,15 @@
       "id": "store-reregister",
       "name": "Re-register the Microsoft Store app",
       "category": "store",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "store",
-      "relevantFindings": ["store-package-broken", "store-missing", "appx-deploy-errors"],
+      "relevantFindings": [
+        "store-package-broken",
+        "store-missing",
+        "appx-deploy-errors"
+      ],
       "summary": "Re-registers the Store package for the current user from its own manifest — fixes a Store whose package status is not Ok.",
       "details": "Runs Add-AppxPackage -Register against the installed Store package's AppxManifest.xml with -DisableDevelopmentMode, which re-registers the app from its already-present files (nothing is downloaded). This is the canonical fix when the health probe shows the Store package status as something other than 'Ok'.",
       "whatItRuns": [
@@ -353,10 +480,17 @@
       "id": "store-reregister-all",
       "name": "Re-register every Store app for all users (aggressive)",
       "category": "store",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "store",
-      "relevantFindings": ["store-package-broken", "store-missing", "appx-deploy-errors"],
+      "relevantFindings": [
+        "store-package-broken",
+        "store-missing",
+        "appx-deploy-errors"
+      ],
       "summary": "The nuclear Appx re-register: every installed package, all users, behind an enforced System Restore checkpoint. Only for when the single-package re-register did not help.",
-      "details": "Enumerates every Appx package for all users and re-registers each from its manifest. Errors on protected/staged system packages are expected and counted honestly rather than hidden — a handful of failures among hundreds of successes is normal and harmless. A System Restore checkpoint is created first because this touches the registration state of every packaged app on the machine, including shell surfaces.",
+      "details": "Enumerates every Appx package for all users and re-registers each from its manifest. Errors on protected/staged system packages are expected and counted honestly rather than hidden — a handful of failures among hundreds of successes is normal and harmless. A System Restore checkpoint is created first because this touches the registration state of every packaged app on the machine, including shell surfaces. WHAT DECIDES THE RESULT: the bulk count does NOT. After the pass the engine looks up Microsoft.WindowsStore by name for the current user, and it is that named check (the same read-only shape the store health probe uses) that decides the step. A run that re-registers hundreds of packages but leaves the Store unregistered is reported as NOT completed, because a total is not evidence about the one package this repair claims the store-missing / store-package-broken findings for. If the Store cannot be re-registered here it is almost certainly deprovisioned or absent from the image, which re-registration cannot recover — the next rung is a repair install (image.ps1).",
       "whatItRuns": [
         "Enable-ComputerRestore -Drive \"%SystemDrive%\\\"",
         "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value 0 -PropertyType DWord -Force  (TEMPORARY: bypasses the once-per-24h throttle; the prior value — or its absence — is captured first)",
@@ -380,10 +514,20 @@
       "id": "search-index-rebuild",
       "name": "Rebuild the Windows Search index",
       "category": "search",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "search",
-      "relevantFindings": ["index-empty", "index-bloated", "search-provider-errors", "wsearch-not-running", "wsearch-disabled", "indexer-process-missing"],
+      "relevantFindings": [
+        "index-empty",
+        "index-bloated",
+        "search-provider-errors",
+        "wsearch-not-running",
+        "wsearch-disabled",
+        "indexer-process-missing"
+      ],
       "summary": "Re-enables Windows Search if it was disabled, stops the indexer, sets the old index database aside (renamed, not deleted), flags a rebuild, and restarts — search re-indexes from scratch.",
-      "details": "If WSearch is Disabled (a state health.ps1 reports as wsearch-disabled and which Start-Service cannot recover from), its start type is restored to Automatic first — otherwise the final start step fails and the rebuild never begins. Then: stops WSearch, renames the index database (Windows.edb, or Windows.db on newer builds) to a timestamped .bak name, sets HKLM\\SOFTWARE\\Microsoft\\Windows Search\\SetupCompletedSuccessfully=0 (the same switch as Settings > Searching Windows > Advanced > Rebuild), and restarts WSearch, which rebuilds the index from scratch. The prior service start type, the prior value of the registry switch, and the old database's name and size are all captured to the ledger.",
+      "details": "If WSearch is Disabled (a state health.ps1 reports as wsearch-disabled and which Start-Service cannot recover from), its start type is restored to Automatic first — otherwise the final start step fails and the rebuild never begins. Then: stops WSearch, renames the index database (Windows.edb, or Windows.db on newer builds) to a timestamped .bak name, sets HKLM\\SOFTWARE\\Microsoft\\Windows Search\\SetupCompletedSuccessfully=0 (the same switch as Settings > Searching Windows > Advanced > Rebuild), and restarts WSearch, which rebuilds the index from scratch. The prior service start type, the prior value of the registry switch, and the old database's name and size are all captured to the ledger. If WSearch is not present on this system at all, the enable step FAILS rather than reporting that there was nothing to do: a start type that was never read cannot be restored, and the rebuild that follows would be meaningless.",
       "whatItRuns": [
         "Set-Service -StartupType <documented default> on any DISABLED service among: WSearch=Automatic  (prior start type captured to the ledger; enabled services are left alone). Fallback when Set-Service is refused on a PROTECTED service (appidsvc is the usual one): Set-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\<name>' -Name Start -Value <2=Automatic|3=Manual> -Type DWord",
         "Stop-Service -Name WSearch -Force",
@@ -407,8 +551,14 @@
       "id": "shell-restart",
       "name": "Restart the shell (Start menu, search UI, Explorer)",
       "category": "search",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "search",
-      "relevantFindings": ["shell-host-crashes", "indexer-process-missing"],
+      "relevantFindings": [
+        "shell-host-crashes",
+        "indexer-process-missing"
+      ],
       "summary": "Restarts StartMenuExperienceHost, SearchHost, and Explorer — instant, self-healing, fixes a hung Start menu or search pane.",
       "details": "Kills the two shell UI hosts and Explorer. All three are self-healing: Windows relaunches the hosts on demand and the engine relaunches Explorer immediately if Windows does not. Open Explorer windows close; running apps are unaffected. This is the 'have you turned the shell off and on again' fix and is completely safe. Note what is NOT in relevantFindings: health.ps1 emits startmenu-host-not-running at severity 'info' (StartMenuExperienceHost is demand-started, so it being absent is normal), and the engine ignores info-severity findings when deciding whether a repair applies. Listing it here would have been a pattern that could never match — a promise in the catalog that no run could ever keep — so it was removed rather than quietly left in.",
       "whatItRuns": [
@@ -431,13 +581,22 @@
       "id": "spooler-clear-queue",
       "name": "Clear the print spooler queue",
       "category": "printing",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "printing",
-      "relevantFindings": ["spool-files-present", "print-jobs-stuck", "spooler-not-running", "print-error-events", "printer-error-state"],
+      "relevantFindings": [
+        "spool-files-present",
+        "print-jobs-stuck",
+        "spooler-not-running",
+        "print-error-events",
+        "printer-error-state"
+      ],
       "summary": "Stops the spooler, moves stuck spool files to a backup folder (not deleted), and restarts — the canonical fix for a jammed print queue.",
-      "details": "Stops the Spooler service, MOVES everything in System32\\spool\\PRINTERS to data\\state\\backups\\spool-<timestamp>\\ (WinUtil deletes these files; FrameForge moves them so nothing is unrecoverable), then restarts the Spooler. The moved file names are recorded in the ledger. Note what is deliberately absent: health.ps1 reports a DISABLED spooler as severity 'info', not a fault, because disabling the print spooler is a common and legitimate choice on a gaming rig (and a standard PrintNightmare mitigation). This repair therefore does not re-enable it — it would be overriding a deliberate decision, not fixing a fault. Honest about its own reach, too: printer-error-state is in relevantFindings because a jammed queue is a common cause of a printer sitting in Error, but a printer reported Offline is usually off, asleep, or off the network, and clearing the spool folder cannot do a thing about that. Every step can succeed while the printer stays offline — which is why a run reports stepsCompleted and verified separately, and only 'addressed' (both) means the finding is gone. See resultFieldsNote.",
+      "details": "Stops the Spooler service, MOVES everything in System32\\spool\\PRINTERS to %LOCALAPPDATA%\\FrameForge\\state\\backups\\spool-<timestamp>\\ (WinUtil deletes these files; FrameForge moves them so nothing is unrecoverable), then restarts the Spooler. The moved file names are recorded in the ledger. Note what is deliberately absent: health.ps1 reports a DISABLED spooler as severity 'info', not a fault, because disabling the print spooler is a common and legitimate choice on a gaming rig (and a standard PrintNightmare mitigation). This repair therefore does not re-enable it — it would be overriding a deliberate decision, not fixing a fault. Honest about its own reach, too: printer-error-state is in relevantFindings because a jammed queue is a common cause of a printer sitting in Error, but a printer reported Offline is usually off, asleep, or off the network, and clearing the spool folder cannot do a thing about that. Every step can succeed while the printer stays offline — which is why a run reports stepsCompleted and verified separately, and only 'addressed' (both) means the finding is gone. See resultFieldsNote.",
       "whatItRuns": [
         "Stop-Service -Name Spooler -Force",
-        "Move-Item C:\\Windows\\System32\\spool\\PRINTERS\\* -> data\\state\\backups\\spool-<timestamp>\\  (moved, not deleted)",
+        "Move-Item %SystemRoot%\\System32\\spool\\PRINTERS\\* -> %LOCALAPPDATA%\\FrameForge\\state\\backups\\spool-<timestamp>\\  (moved, not deleted)",
         "Start-Service -Name Spooler"
       ],
       "tier": "standard",
@@ -456,8 +615,13 @@
       "id": "audio-restart",
       "name": "Restart the audio services",
       "category": "audio",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "audio",
-      "relevantFindings": ["audio-service-stopped-*"],
+      "relevantFindings": [
+        "audio-service-stopped-*"
+      ],
       "summary": "Restarts AudioEndpointBuilder and then Audiosrv, in that order — the canonical fix for audio that stopped working after sleep or a driver hiccup.",
       "details": "Order matters: Audiosrv depends on AudioEndpointBuilder, so the endpoint builder is restarted first (its dependents restart with it), then Audiosrv is confirmed running. Service states and start types are captured to the ledger before the restart, and undo restores the captured run-states.",
       "whatItRuns": [
@@ -480,14 +644,17 @@
       "id": "ntp-resync",
       "name": "Fix time synchronization (NTP)",
       "category": "time",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": null,
       "localDetect": "ntp",
       "relevantFindings": [],
       "summary": "Points the Windows Time service at pool.ntp.org and forces a resync — fixes TLS/store/update failures caused by a wrong clock.",
-      "details": "Captures the current time configuration (peer list and sync type from w32tm /query /configuration) to the ledger, then configures pool.ntp.org as the manual peer, restarts the time service, and forces a resync. Detection is a local read-only check (health.ps1 has no time category): the W32Time service state plus the last-successful-sync timestamp from w32tm /query /status. Fully reversible — undo restores the captured peer list (or domain-hierarchy sync on domain machines).",
+      "details": "Captures the current time configuration — the peer list and sync type read straight from HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters (NtpServer, Type), where Windows stores them verbatim and UNLOCALIZED — to the ledger, then configures pool.ntp.org as the manual peer, restarts the time service, and forces a resync. Detection is a local read-only check (health.ps1 has no time category): the W32Time service state plus whether the System event log carries a successful time-sync event (Microsoft-Windows-Time-Service id 35) inside the last 7 days — a numeric event id, not a localized label. If the log does not reach back that far, detection says it could not determine rather than guessing. DOMAIN MEMBERS ARE REFUSED: a machine joined to a domain takes its clock from the domain hierarchy (Type NT5DS), and repointing it at pool.ntp.org risks Kerberos logon, share and authentication failures once the clock drifts past the five-minute tolerance — so detection returns 'not-applicable' with that explanation and the fix does not run. If you override it with -Force, the fix step still refuses to rewrite the peer list on a domain member: it runs 'w32tm /config /syncfromflags:DOMHIER /update' instead, which resyncs from the hierarchy. Fully reversible — undo restores the captured peer list, or domain-hierarchy sync when the captured Type was NT5DS, and REFUSES outright (rather than applying an assumed time.windows.com default) if the prior configuration was never captured.",
       "whatItRuns": [
         "Start-Service -Name w32time  (if stopped)",
-        "w32tm /config /manualpeerlist:\"pool.ntp.org,0x8\" /syncfromflags:MANUAL /update",
+        "w32tm /config /manualpeerlist:\"pool.ntp.org,0x8\" /syncfromflags:MANUAL /update   — EXCEPT on a domain-joined machine whose W32Time Type is NT5DS (or cannot be read), where this becomes \"w32tm /config /syncfromflags:DOMHIER /update\": a domain member must keep taking its clock from the domain hierarchy, because repointing it at pool.ntp.org risks Kerberos logon failures once the clock drifts past the five-minute tolerance",
         "Restart-Service -Name w32time",
         "w32tm /resync"
       ],
@@ -496,24 +663,30 @@
       "reversible": true,
       "requiresAdmin": true,
       "requiresReboot": false,
-      "risks": "The configured NTP peer changes to pool.ntp.org (prior peer recorded and restorable via undo). On a domain-joined machine, domain time hierarchy is overridden until undone — undo restores /syncfromflags:DOMHIER for domain configurations. The system clock may step visibly if it was far off.",
+      "risks": "On an unmanaged machine the configured NTP peer changes to pool.ntp.org; the prior peer list and Type are captured from the registry and restored by undo. On a DOMAIN-JOINED machine this repair refuses by default and, even under -Force, never repoints the peer list — it re-applies domain-hierarchy sync (/syncfromflags:DOMHIER) instead, so domain time is not broken. Undo will not guess: if the prior configuration was not captured it refuses and tells you the exact command to run by hand. The system clock may step visibly if it was far off.",
       "sources": [
         "https://learn.microsoft.com/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings",
         "docs/research/winutil-dissection.md#35-ntp-fix"
       ],
-      "verifyAfter": "w32tm /query /status is re-read: the service must be running and 'Last Successful Sync Time' must be current."
+      "verifyAfter": "The same local probe is re-run: the W32Time service must be running and the System event log must show a successful time-sync event (Microsoft-Windows-Time-Service id 35) inside the staleness window. Event ids are numeric and identical on every UI language, so the verification works on localized Windows — and when the log cannot answer, the result says 'could not determine' instead of claiming success."
     },
     {
       "id": "temp-clean",
       "name": "Clean temporary files",
       "category": "disk-space",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "disk-space",
-      "relevantFindings": ["space-critical-*", "space-low-*"],
+      "relevantFindings": [
+        "space-critical-*",
+        "space-low-*"
+      ],
       "summary": "Deletes files from the user and system temp folders, skipping anything in use, and reports exactly how many files and bytes were removed.",
-      "details": "Deletes files under %TEMP% and C:\\Windows\\Temp (system temp only when elevated; when run unelevated the system temp is skipped and the report says so). Every file is deleted individually inside try/catch: files locked by running programs are skipped and counted, never forced. Subdirectories left empty afterwards are removed on a best-effort basis as part of the same step. The honest per-folder tally (deleted count, deleted bytes, skipped count) goes into the result and the ledger — no inflated 'GB freed' claims.",
+      "details": "Deletes files under %TEMP% and %SystemRoot%\\Temp (system temp only when elevated; when run unelevated the system temp is skipped and the report says so). Every file is deleted individually inside try/catch: files locked by running programs are skipped and counted, never forced. Subdirectories left empty afterwards are removed on a best-effort basis as part of the same step. The honest per-folder tally (deleted count, deleted bytes, skipped count) goes into the result and the ledger — no inflated 'GB freed' claims.",
       "whatItRuns": [
         "Get-ChildItem %TEMP% -Recurse -Force -File | Remove-Item  (each file individually; in-use files skipped)",
-        "Get-ChildItem C:\\Windows\\Temp -Recurse -Force -File | Remove-Item  (elevated only; same per-file handling)"
+        "Get-ChildItem %SystemRoot%\\Temp -Recurse -Force -File | Remove-Item  (elevated only; same per-file handling)"
       ],
       "tier": "standard",
       "restorePoint": "none",
@@ -530,13 +703,20 @@
       "id": "component-cleanup",
       "name": "Component store cleanup (safe tier)",
       "category": "disk-space",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "disk-space",
       "probeDeep": true,
-      "relevantFindings": ["component-store-cleanup-recommended", "space-critical-*", "space-low-*"],
+      "relevantFindings": [
+        "component-store-cleanup-recommended",
+        "space-critical-*",
+        "space-low-*"
+      ],
       "summary": "DISM StartComponentCleanup: reclaims superseded component-store space WITHOUT /ResetBase, so existing updates stay uninstallable.",
-      "details": "Runs the safe component-store cleanup that removes superseded component versions. Deliberately does NOT pass /ResetBase (WinUtil's Disk Cleanup tweak always does): /ResetBase additionally makes every installed update permanent and un-uninstallable, which belongs behind an explicit aggressive-tier choice (component-cleanup-resetbase). Detection uses the deep disk-space probe, which parses DISM AnalyzeComponentStore's 'Component Store Cleanup Recommended' verdict.",
+      "details": "Runs the safe component-store cleanup that removes superseded component versions. Deliberately does NOT pass /ResetBase (WinUtil's Disk Cleanup tweak always does): /ResetBase additionally makes every installed update permanent and un-uninstallable, which belongs behind an explicit aggressive-tier choice (component-cleanup-resetbase). Detection uses the deep disk-space probe, which parses DISM AnalyzeComponentStore's 'Component Store Cleanup Recommended' verdict. The command is run with /English so the output recorded in the ledger, and any failure tail a user is asked to read back, are in the language this catalog describes. /English changes the output language only — never the operation, and never the exit code, which is what decides the verdict.",
       "whatItRuns": [
-        "Dism.exe /Online /Cleanup-Image /StartComponentCleanup"
+        "Dism.exe /English /Online /Cleanup-Image /StartComponentCleanup"
       ],
       "tier": "standard",
       "restorePoint": "none",
@@ -554,17 +734,24 @@
       "id": "component-cleanup-resetbase",
       "name": "Component store cleanup with /ResetBase (aggressive)",
       "category": "disk-space",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "disk-space",
       "probeDeep": true,
-      "relevantFindings": ["component-store-cleanup-recommended", "space-critical-*", "space-low-*"],
+      "relevantFindings": [
+        "component-store-cleanup-recommended",
+        "space-critical-*",
+        "space-low-*"
+      ],
       "summary": "Maximum component-store space reclaim — at the permanent cost that no currently installed update can ever be uninstalled again. Behind an enforced System Restore checkpoint.",
-      "details": "StartComponentCleanup with /ResetBase removes ALL superseded versions of every component. The extra space over the safe tier comes with a permanent, documented trade: every update installed so far becomes part of the base and can no longer be uninstalled. This is irreversible by design, which is why it sits behind the aggressive tier and an enforced System Restore checkpoint instead of being silently bundled into a 'disk cleanup' button.",
+      "details": "StartComponentCleanup with /ResetBase removes ALL superseded versions of every component. The extra space over the safe tier comes with a permanent, documented trade: every update installed so far becomes part of the base and can no longer be uninstalled. This is irreversible by design, which is why it sits behind the aggressive tier and an enforced System Restore checkpoint instead of being silently bundled into a 'disk cleanup' button. The command is run with /English so the output recorded in the ledger, and any failure tail a user is asked to read back, are in the language this catalog describes. /English changes the output language only — never the operation, and never the exit code, which is what decides the verdict.",
       "whatItRuns": [
         "Enable-ComputerRestore -Drive \"%SystemDrive%\\\"",
         "New-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value 0 -PropertyType DWord -Force  (TEMPORARY: bypasses the once-per-24h throttle; the prior value — or its absence — is captured first)",
         "Checkpoint-Computer -Description 'FrameForge: before <repair name>' -RestorePointType MODIFY_SETTINGS",
         "Set-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore' -Name SystemRestorePointCreationFrequency -Value <captured prior value>  — or Remove-ItemProperty when the value did not exist before. Runs in a finally block, so the throttle is put back even if Checkpoint-Computer fails.",
-        "Dism.exe /Online /Cleanup-Image /StartComponentCleanup /ResetBase"
+        "Dism.exe /English /Online /Cleanup-Image /StartComponentCleanup /ResetBase"
       ],
       "tier": "aggressive",
       "restorePoint": "enforced",
@@ -582,12 +769,17 @@
       "id": "activation-retry",
       "name": "Retry Windows activation",
       "category": "activation",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": "activation",
-      "relevantFindings": ["windows-not-activated"],
+      "relevantFindings": [
+        "windows-not-activated"
+      ],
       "summary": "Forces an online activation attempt against Microsoft's activation servers and reports the real error code when it fails.",
-      "details": "Runs slmgr /ato, the documented way to force an activation attempt for a licence that is present but not in the Licensed state (grace period, notification state, or a transient server failure). Detection is the activation health probe reading LicenseStatus straight from the Software Licensing service, so this repair refuses outright on an already-activated machine. When activation fails, the raw error is surfaced with its meaning rather than a generic 'something went wrong': 0xC004F213 means no key or digital licence is present for this device, 0xC004C003 means the server refused the key (typically after a hardware change, where the fix is Settings > Activation > Troubleshoot with the Microsoft account that holds the digital licence). FrameForge never enters, generates, or alters a product key.",
+      "details": "Runs slmgr /ato, the documented way to force an activation attempt for a licence that is present but not in the Licensed state (grace period, notification state, or a transient server failure). Detection is the activation health probe reading LicenseStatus straight from the Software Licensing service, so this repair refuses outright on an already-activated machine. Whether it SUCCEEDED is not read from slmgr's output, which is fully localized — it is re-read from SoftwareLicensingProduct.LicenseStatus, the same structured source the health probe and the state capture use, so fix and verify are judged by identical evidence. When activation fails, the raw error is surfaced with its meaning rather than a generic 'something went wrong' (hex result codes are not localized, so this works everywhere): 0xC004F213 means no key or digital licence is present for this device, 0xC004C003 means the server refused the key (typically after a hardware change, where the fix is Settings > Activation > Troubleshoot with the Microsoft account that holds the digital licence). FrameForge never enters, generates, or alters a product key. CHANNEL GATE: every Windows licence row carrying a partial product key is enumerated (not an arbitrary first row out of an unordered CIM result), and the channel is read structurally from ProductKeyChannel, falling back to the invariant channel token inside Description and then to 'unknown'. On a VOLUME/KMS client (Volume:GVLK) or a SUBSCRIPTION licence this repair REFUSES as not-applicable: a KMS client activates against a KMS host on the local network rather than Microsoft, and subscription activation comes from the signed-in user's entitlement in Entra ID — in both cases slmgr /ato cannot fix what is actually broken, and the summary above would stop being a true description of what runs. -Force overrides deliberately.",
       "whatItRuns": [
-        "cscript.exe //nologo C:\\Windows\\System32\\slmgr.vbs /ato   (force an online activation attempt against Microsoft's activation servers)"
+        "cscript.exe //nologo %SystemRoot%\\System32\\slmgr.vbs /ato   (force an online activation attempt against Microsoft's activation servers; the RESULT is then read from SoftwareLicensingProduct.LicenseStatus — the same structured source the health probe and the state capture use — not from slmgr's localized output)"
       ],
       "tier": "standard",
       "restorePoint": "none",
@@ -599,20 +791,24 @@
         "https://support.microsoft.com/windows/activate-windows-c39005d4-95ee-b91e-b399-2820fda32227",
         "docs/research/repair-ladder.md#210-activation"
       ],
-      "verifyAfter": "The activation probe is re-run: LicenseStatus must read 1 (Licensed). Anything else is reported as not fixed, with the licensing error code and what it actually means."
+      "verifyAfter": "The activation probe is re-run: LicenseStatus must read 1 (Licensed). The fix step itself already re-queries the same SoftwareLicensingProduct property immediately after slmgr /ato rather than looking for the word 'successfully' in localized output, so a successful activation on a non-English machine is reported as success. Anything else is reported as not fixed, with the licensing error code and what it actually means; if the licensing service cannot be queried at all the step says it could not determine, instead of guessing either way."
     },
     {
       "id": "winget-repair",
       "name": "Repair the WinGet package manager",
       "category": "apps",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": null,
       "localDetect": "winget",
       "relevantFindings": [],
       "summary": "Reinstalls/repairs the App Installer (WinGet) via the Microsoft.WinGet.Client PowerShell module — the modern fix for a missing or broken winget.",
-      "details": "Detection is a local read-only check: is winget on PATH and does 'winget --version' succeed (health.ps1 has no category for this). The fix bootstraps the NuGet provider and the Microsoft.WinGet.Client module if the Repair-WinGetPackageManager cmdlet is not already available, then runs Repair-WinGetPackageManager -AllUsers -Latest — the same modern path WinUtil uses, with the bootstrap steps skipped when already present instead of always reinstalling.",
+      "details": "Detection is a local read-only check: is winget on PATH and does 'winget --version' succeed (health.ps1 has no category for this). Before bootstrapping anything the engine checks two things that make this repair impossible on a hardened fleet and names the cause instead of surfacing a raw PowerShellGet exception: whether PowerShell is in FullLanguage mode (WDAC/AppLocker enforcement drops it to ConstrainedLanguage, where Install-Module and the provider bootstrap simply cannot run) and whether the PowerShell Gallery is reachable (corporate proxies routinely block it). The fix then bootstraps the NuGet provider and the Microsoft.WinGet.Client module if the Repair-WinGetPackageManager cmdlet is not already available, then runs Repair-WinGetPackageManager -AllUsers -Latest — the same modern path WinUtil uses, with the bootstrap steps skipped when already present instead of always reinstalling.",
       "whatItRuns": [
+        "Read $ExecutionContext.SessionState.LanguageMode, then Invoke-WebRequest -Uri \"https://www.powershellgallery.com/api/v2\" -UseBasicParsing -TimeoutSec 10   (read-only preflight: WDAC/AppLocker ConstrainedLanguage or a blocked gallery is named as the cause instead of surfacing a raw PowerShellGet exception)",
         "Install-PackageProvider -Name NuGet -Force  (only if Repair-WinGetPackageManager is not already available)",
-        "Install-Module -Name Microsoft.WinGet.Client -Force  (only if not already available)",
+        "Install-Module -Name Microsoft.WinGet.Client -Force  (only if not already available; installs machine-wide under %ProgramFiles%\\WindowsPowerShell\\Modules, and the install is recorded in the run's mutations because this repair is reversible:false and the module is left behind)",
         "Repair-WinGetPackageManager -AllUsers -Latest"
       ],
       "tier": "standard",
@@ -620,7 +816,7 @@
       "reversible": false,
       "requiresAdmin": true,
       "requiresReboot": false,
-      "risks": "Installs the Microsoft.WinGet.Client PowerShell module from the PowerShell Gallery and downloads the latest App Installer package from Microsoft — both are network operations from Microsoft-controlled sources. Installed winget packages and their sources are untouched.",
+      "risks": "Installs the Microsoft.WinGet.Client PowerShell module from the PowerShell Gallery and downloads the latest App Installer package from Microsoft — both are network operations from Microsoft-controlled sources. Installed winget packages and their sources are untouched. The Microsoft.WinGet.Client module is installed MACHINE-WIDE under %ProgramFiles%\\WindowsPowerShell\\Modules and, because this repair is reversible:false, it is left behind: the install is recorded in the run's mutations with its path, the ledger before-state records whether the module was already present, and you can remove it with 'Uninstall-Module -Name Microsoft.WinGet.Client -AllVersions'. On a machine in ConstrainedLanguage mode or without access to the PowerShell Gallery the repair stops at the first step with a message naming that cause, rather than failing obscurely.",
       "sources": [
         "https://learn.microsoft.com/powershell/module/microsoft.winget.client/repair-wingetpackagemanager",
         "docs/research/winutil-dissection.md#34-winget-reinstall"
@@ -631,6 +827,9 @@
       "id": "enable-netfx3",
       "name": "Enable .NET Framework 3.5 (covers 2.0 and 3.0)",
       "category": "optional-features",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": null,
       "localDetect": "optional-feature",
       "optionalFeature": "NetFx3",
@@ -658,6 +857,9 @@
       "id": "enable-netfx4-advsrvs",
       "name": "Enable .NET Framework 4.x advanced services (WCF activation)",
       "category": "optional-features",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": null,
       "localDetect": "optional-feature",
       "optionalFeature": "NetFx4-AdvSrvs",
@@ -684,6 +886,9 @@
       "id": "enable-directplay",
       "name": "Enable DirectPlay (legacy game compatibility)",
       "category": "optional-features",
+      "minBuild": null,
+      "maxBuild": null,
+      "generation": "any",
       "healthCheck": null,
       "localDetect": "optional-feature",
       "optionalFeature": "DirectPlay",
@@ -707,5 +912,10 @@
       ],
       "verifyAfter": "Get-WindowsOptionalFeature -Online -FeatureName DirectPlay is re-run and must report Enabled. Whether the game then launches is something only the game can answer, and the result says so rather than claiming the game is fixed."
     }
-  ]
+  ],
+  "buildApplicabilityNote": "schemaVersion 3 adds three fields to EVERY repair entry so the catalog can finally say WHERE a repair applies, not just what it runs: minBuild (inclusive Windows build floor, null = no floor), maxBuild (inclusive ceiling, null = no ceiling, used when a mechanism was REMOVED in a later build), and generation ('any' | 'win10' | 'win11'). Before this the catalog had no way to express \"this rung only exists on 23H2+\" or \"this is Windows 11 only\", so 'repair.ps1 -Action list' returned an identical list on 21H2, 25H2, Windows 10 and Server, and every build-specific rung would have had to be hacked in as special-case code. repair.ps1 evaluates the three fields against the machine's CurrentBuildNumber and stamps every listed repair with applicable / notApplicableReason; a repair that does not apply here is still LISTED (so the user can see the rung exists and why it is unavailable) and 'run' refuses it with exit code 3 and errorCode 'not-applicable-on-this-build' unless -Force is given. applicable:null means the build could not be read — \"could not determine\", which also refuses, because running a build-gated repair on an unknown build is fixing blind. All three fields must be present on every entry even when their value is null; 'repair.ps1 -Action selftest' fails if any is missing, so the gate can never be silently forgotten on the next repair added. Most entries are minBuild:null / maxBuild:null / generation:'any' on purpose — sfc, DISM, chkdsk, the netsh resets, the Windows Update reset and the optional features all work on Windows 10 as well as 11, and marking them win11-only would drop a working capability rather than describe one.",
+  "stateLocationNote": "RUNTIME STATE LOCATION. The repair ledger and the file backups live in %LOCALAPPDATA%\\FrameForge\\state (repairs-ledger.json, and backups\\ beside it) — the same folder engine/engine.ps1 uses, and deliberately NOT inside the install tree. A per-machine install under %ProgramFiles%, a read-only or network copy, Controlled Folder Access, or a OneDrive Known-Folder-Move profile all make <install>\\data\\state unwritable, and an engine that cannot write its ledger cannot undo anything (doctrine rule 3). Five repairs here are usable without administrator rights (wu-repair-reinstall, store-cache-reset, store-reregister, shell-restart, temp-clean) and a standard user could not run any of them while state lived in the install tree; the qmgr*.dat and print-spool backups that are the only recovery path for the reversible:false repairs lived there too, where an uninstall destroys them. A ledger written by an earlier version into <install>\\data\\state is COPIED to the new location on first use and the original is left exactly where it was — nothing is moved and nothing is deleted. If the state folder cannot be created or written, a run ABORTS before it mutates anything rather than proceeding unrecorded, and 'repair.ps1 -Action ledger' reports errorCode 'ledger-unreadable' rather than an empty ledger: a file that could not be read is never rendered as 'no repairs recorded'. OVERRIDE: if the environment variable FRAMEFORGE_STATE_DIR is set to a non-blank path, THAT directory is the state root instead - it holds repairs-ledger.json and backups\\ exactly as %LOCALAPPDATA%\\FrameForge\\state otherwise would. It exists so the engine test suite can sandbox repair state: New-FFSandbox copies engine\\ and data\\ to %TEMP% and relies on the engine resolving everything relative to its own location, which an absolute %LOCALAPPDATA% path defeated - a suite run wrote to the invoking user's REAL ledger while the SAFETY assertions checked a sandbox path the engine could never write. A set-but-unusable override is a hard reported failure; it NEVER falls back to %LOCALAPPDATA%, because a caller that believes it is sandboxed must not be able to write the real ledger by accident. When the override is in force the v1 install-tree migration is skipped, and 'repair.ps1 -Action ledger' reports both the resolved root (stateDir) and where it came from (stateDirSource: 'localappdata' | 'env-override' | 'temp-fallback').",
+  "localeNote": "PORTABILITY (doctrine rule 2). No repair in this catalog decides an OUTCOME by matching English text any more. Where prose is the only thing a tool prints, the parse is layered exactly like image.ps1's language detection — exit code or structured source first, the DOCUMENTED English-only text parse as a middle rung, and an honest 'could not determine' last — and the honest-unknown branch is always reported as NOT completed rather than allowed to fall through to success. Concretely: sfc's result is read from its exit code, then the [SR] markers in %SystemRoot%\\Logs\\CBS\\CBS.log that were written AT OR AFTER that scan started (the locale-independent rung, and the same order and the same marker set engine/health.ps1 uses, so the probe and the repair cannot grade one machine differently), then its DOCUMENTED English-only console text, and a result none of those can establish now FAILS the run instead of reporting fixed:true; whether chkdsk scheduled an offline check is read from BootExecute and the volume dirty bit, and when neither can be read the step says so instead of asserting that nothing was scheduled; 'netsh int ip reset' is judged by its exit code plus whether it actually wrote its reset log, not by the word 'resetting'; activation success is read from SoftwareLicensingProduct.LicenseStatus, the same structured source the health probe uses; the Windows Time peer list and sync type are read from HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters, and the last successful sync from System event id 35, so neither detection nor undo depends on w32tm's localized labels. Command paths in whatItRuns use the %SystemRoot% / %ProgramData% / %TEMP% tokens rather than C:\\Windows, because Windows is not always installed on C: and the catalog must document the command that actually runs. CASE FOLDING: PowerShell's -match, -notmatch, -like, -replace and -split fold case with the CURRENT CULTURE, not invariantly (only -eq / -ieq are invariant). Measured under tr-TR on PS 5.1: ('info' -match 'INFO') is False, ('CLIENT' -like 'Client*') is False, ('FILE' -replace 'file','X') returns 'FILE' unchanged, and an inline (?i) does not help. engine/repair.ps1 therefore pins the thread to the invariant culture as its first statement (before any pattern is compiled and cached) AND routes every text parse that decides an outcome through an explicitly CultureInvariant matcher, so no verdict in this catalog depends on the machine's regional settings.",
+  "managedMachineNote": "ENVIRONMENT. Three signals decide whether this machine's update pipeline is managed by someone other than the user, and the engine reads all three before touching anything: HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate (WUServer / WUStatusServer / UseWUServer / TargetGroup), HKLM\\SOFTWARE\\Microsoft\\Enrollments\\*\\ProviderID (MDM/Intune), and Win32_ComputerSystem.PartOfDomain. They are recorded in the ledger before-state as wuPolicy and surfaced by 'repair.ps1 -Action preflight' as managementState / managementNote BEFORE anything runs. On a managed machine wu-reset does NOT clear the WinHTTP proxy (on a corporate network that proxy is the machine's only route to updates, and clearing it would break Windows Update, the Store and activation rather than repair them — and this repair is reversible:false, so there would be no automatic way back) and does NOT delete the WSUS client identity (that forces a full re-registration against the WSUS server named by policy, not against Microsoft, and makes the machine vanish from the WSUS console until it reports in — an administrator action, not a user one). Both steps report the refusal by name instead of executing silently. ntp-resync refuses on a domain member rather than taking it off the domain time hierarchy, because a clock that drifts past the Kerberos five-minute tolerance costs the user logon, shares and intranet access. Nothing here reads, writes, or removes Group Policy itself.",
+  "repairLadderNote": "The system-files ladder, cheapest rung first: sfc-scannow (5-15 min) — dism-restorehealth (DISM then SFC) — wu-repair-reinstall (Settings > Recovery > \"Fix problems using Windows Update\" > Reinstall now: one reboot, no ISO, Windows 11 23H2+ only) — and only then the full ISO in-place repair in data/image-repair.json (30-90 min, two or three reboots, consent contract, BitLocker rails). wu-repair-reinstall belongs BELOW the ISO in-place repair in any UI that renders the ladder: it is the cheaper option to try first on the builds that have it. It is guided rather than scripted because the flow has no documented CLI. On Windows 11 21H2 (22000) and 22H2 (22621) it is listed with applicable:false and a reason naming the build, so the absence is explained rather than silent."
 }

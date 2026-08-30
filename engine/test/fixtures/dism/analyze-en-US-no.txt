@@ -1,0 +1,24 @@
+
+Deployment Image Servicing and Management tool
+Version: 10.0.26200.1
+
+Image Version: 10.0.26200.9168
+
+[==========================100.0%==========================]
+
+Component Store (WinSxS) information:
+
+Windows Explorer Reported Size of Component Store : 6.90 GB
+
+Actual Size of Component Store : 6.44 GB
+
+    Shared with Windows : 6.10 GB
+    Backups and Disabled Features : 0.30 GB
+    Cache and Temporary Data : 0.04 GB
+
+Date of Last Cleanup : 2026-08-21 03:12:44
+
+Number of Reclaimable Packages : 0
+Component Store Cleanup Recommended : No
+
+The operation completed successfully.

@@ -1,6 +1,16 @@
-﻿{
+{
   "schemaVersion": 1,
   "note": "UI-facing catalog for engine/health.ps1 categories. Every check here is read-only — the same probe runs before a fix (detect) and after it (verify). fixesAvailable lists repair ids that exist in data/repairs.json and are implemented by engine/repair.ps1; health.ps1 itself never fixes anything. This is a hard contract, not a wishlist: 'repair.ps1 -Action selftest' fails if any id here does not resolve to a real repair. Categories whose findings have no honest software fix say so in noFixesNote instead of listing an id that does not exist.",
+  "statusVocabulary": {
+    "ok": "Every signal in this category was read and none of them indicates a fault.",
+    "needs-admin": "The probe ran but could not see everything without administrator rights. Elevate and it will know.",
+    "unknown": "At least one signal could NOT be read — a denied event channel, an unparseable tool result, a failed query. This is the doctrine's first-class 'could not determine' (docs/GAUNTLET.md rule 2) and it deliberately outranks 'ok' and 'needs-admin' so a failed measurement can never be rendered as a green tick. repair.ps1 has no 'unknown' arm in its detection map, so a repair gated on this category refuses with reason 'unparseable' — a named refusal, never 'nothing is broken here'.",
+    "warning": "A fault was measured.",
+    "critical": "A fault was measured that blocks other repairs or risks data."
+  },
+  "serviceQueryNote": "Five categories (windows-update, store, search, printing, audio) grade core Windows services. Every Get-Service failure used to arrive down one catch and become present=false, so an access denial, an RPC failure to the Service Control Manager, or a stripped Microsoft.PowerShell.Management module made those categories assert AT CRITICAL SEVERITY that Windows services had been DELETED by a debloat script — on a machine where the query had simply never run. Service presence is now TRI-STATE, decided by error identity and never by message text: true when Get-Service returned the service; false ONLY when Get-Service ran and answered NoServiceFoundForGivenName / a ServiceCommandException in the ObjectNotFound category, which is a measured absence; null when the query itself could not run. A null yields a '<name>-query-failed' finding at severity 'unknown' that says explicitly it is not a statement that the service is missing, and the '<name>-missing' fault findings are now unreachable from an unmeasured result. The service-count sentence ('N of M services present and enabled') counts only services that were actually MEASURED, and names the ones that could not be queried, because putting unmeasured rows in the denominator is the same fabricated absence in a different costume.",
+  "localeNote": "Every verdict in this catalog is reached from exit codes, structured cmdlets, CIM properties, registry values, event Ids/EventData, or structural log parsing — not from matching English console text. Where a text parse is still used (the SFC console fallback, the fsutil fallback, the powercfg fallback) it is documented English-only in the source, it runs only AFTER the locale-independent rung has failed, and failing it produces 'unknown' rather than a guess. DISM is always invoked with the global /English switch.",
+  "platformNote": "Every document health.ps1 emits also carries the platform the verdict was reached on: os (build, UBR, DisplayVersion, Caption, InstallationType, generation), edition (EditionID, SKU, isN, isLtsc, isServer, isDomainJoined, isMdmEnrolled), supportedOs, unvalidatedPlatform and languageMode. FrameForge is validated on Windows 11 CLIENT builds (22000/22621/22631/26100/26200). On anything else supportedOs is false and unvalidatedPlatform is true: health.ps1 mutates nothing so it still runs read-only, but the mutating engines refuse with errorCode 'unsupported-os'. The build number is parsed as DIGITS from CurrentVersion CurrentBuildNumber and, failing that, from Win32_OperatingSystem.BuildNumber — never cast straight to [int], because [int]$null is 0 and a machine whose build could not be read was being told 'Windows build 0 is older than 22000'. When no source answers, build is null, generation is 'unknown', and platformUndetermined is true: supportedOs is false because the platform could not be MEASURED, which the refusal wording must say rather than calling the platform unsupported. Under WDAC/AppLocker ConstrainedLanguage the engines emit a single JSON error document with errorCode 'constrained-language' and exit 3 instead of dying silently; that document is written to the success stream, because [Console]::Out.WriteLine is itself forbidden in ConstrainedLanguage and used to make the one document that mattered under application control the one document that could never be written.",
   "checks": [
     {
       "id": "system-files",
@@ -8,8 +18,9 @@
       "summary": "Checks whether the Windows component store is corrupt and whether a servicing reboot is pending.",
       "whatWeCheck": [
         "DISM corruption flag (Repair-WindowsImage -CheckHealth: Healthy / Repairable / NonRepairable)",
-        "Pending servicing reboot (Component Based Servicing RebootPending key)",
-        "Deep scan only: SFC verify-only pass (with the CBS.log [SR] tail captured as evidence) and a full DISM ScanHealth (slow, still read-only)"
+        "Pending servicing reboot (Component Based Servicing RebootPending key). Test-Path returns false for a key it cannot read exactly as readily as for one that is absent, so 'no servicing reboot is pending' is only said when the read actually completed; otherwise the summary says a pending reboot cannot be ruled out",
+        "Deep scan only: SFC verify-only pass and a full DISM ScanHealth (slow, still read-only)",
+        "The SFC verdict is read from the CBS.log [SR] entries written by THIS run (time-filtered against the run's start time), not from sfc's console text, which is localized on every non-English Windows. A clean verdict requires a genuine terminator ('[SR] Verify complete' or '[SR] Repair complete') for this run; an sfc that started (logging '[SR] Beginning Verify and Repair transaction' and '[SR] Verifying N components') and then aborted is reported as 'sfc-verify-indeterminate' at severity 'unknown', never as a completed clean scan. The English console parse remains only as a documented fallback, and when neither rung answers the result is reported as 'unknown' — never as clean"
       ],
       "fixesAvailable": ["dism-restorehealth", "sfc-scannow"],
       "sources": [
@@ -22,9 +33,9 @@
       "name": "Disk & file-system health",
       "summary": "Checks the NTFS dirty bit, physical drive health and wear, and recent disk error events.",
       "whatWeCheck": [
-        "NTFS dirty bit on the system drive (fsutil dirty query)",
+        "NTFS dirty bit on the system drive, read structurally with FSCTL_IS_VOLUME_DIRTY over a volume handle — locale-independent, and readable WITHOUT administrator rights. fsutil's English output is only a documented fallback, and when neither rung answers the dirty bit is reported as 'unknown', never as clean",
         "Physical drive health status and SSD wear / media error counters (per-drive table attached as evidence)",
-        "NTFS, disk, and storage-controller error events from the last 7 days (Ntfs 55/98/130, disk 7/51/153, storahci 129 controller resets)",
+        "NTFS, disk, and storage-controller error events from the last 7 days (Ntfs 55/98/130, disk 7/51/153, controller reset 129, surprise removal 157) across every storage provider that actually exists on the machine — Ntfs, disk, storahci, stornvme and the Intel RST drivers. storahci is the SATA/AHCI port driver and logs nothing on an NVMe-only box, so it alone could never see an NVMe controller reset. Provider names are filtered to the ones present first, because Get-WinEvent rejects the entire query when one name is unknown, and the summary names the providers that were queried",
         "Deep scan only: an online chkdsk scan that detects but never repairs"
       ],
       "fixesAvailable": ["chkdsk-scan", "chkdsk-spotfix", "chkdsk-full-repair"],
@@ -39,9 +50,11 @@
       "name": "Windows Update",
       "summary": "Checks the update service pipeline, recent failures, staleness, and whether a reboot is pending.",
       "whatWeCheck": [
-        "Update pipeline services (wuauserv, BITS, cryptsvc, Delivery Optimization, Update Orchestrator)",
+        "Update pipeline services (wuauserv, BITS, cryptsvc, Delivery Optimization, Update Orchestrator). A service whose query could NOT run is reported as '<name>-query-failed' at severity 'unknown', never as a critical 'the service was deleted' claim — see serviceQueryNote",
         "Install and scan failure events from the last 30 days (events 20, 31)",
-        "Days since the last successfully installed update",
+        "Days since the last successfully installed update — from Get-HotFix, falling back to Win32_QuickFixEngineering.InstalledOn parsed under InvariantCulture (the cmdlet returns an empty date on many non-en-US installs, which used to make this check disappear in silence). When no date can be read at all the result is 'unknown', not 'fine'",
+        "Whether updates are deliberately held back before calling them stuck: Windows Update for Business deferrals, quality/feature pauses, a Settings pause, a WSUS pin, and a TargetReleaseVersion pin. A deferred machine is reported as configured, not faulty",
+        "Whether the update services still EXIST at all: a service deleted by a debloat script is reported as a fault in its own right, since Set-Service cannot recreate one",
         "Failure codes from the last 25 update operations in the update history",
         "The three pending-reboot registry signals"
       ],
@@ -56,13 +69,17 @@
       "name": "Network & DNS",
       "summary": "Tests each network layer separately so the fix targets the layer that is actually broken.",
       "whatWeCheck": [
-        "Physical adapter link state",
-        "Default gateway reachability",
-        "Internet reachability by raw IP (1.1.1.1) — bypasses DNS entirely",
+        "Physical adapter link state, and whether the adapter enumeration ITSELF ran. Get-NetAdapter used to be called with -ErrorAction SilentlyContinue, so a failed enumeration and a machine with genuinely no physical NIC produced the same empty list and the same link=false. A failed enumeration is now 'adapter-query-failed' at severity 'unknown' and the link layer is reported as null (not measured); an enumeration that ran and found nothing is 'no-physical-adapter' at severity info, since -Physical excludes virtual adapters",
+        "Default gateway reachability for BOTH address families (0.0.0.0/0 and ::/0) — an IPv6-only network has no IPv4 default route, and that is not a DHCP fault",
+        "Whether the routing table was READ at all. Get-NetRoute throws both when a family genuinely has no default route and when the query cannot run (NetTCPIP removed, a broken CIM stack), so the two are told apart by error identity: CmdletizationQuery_NotFound / ObjectNotFound means measured-and-absent, anything else is reported as 'route-query-failed' at severity 'unknown'. The critical 'no-default-route' verdict is now only reachable when both families were actually queried",
+        "Internet reachability by raw IP over TCP/443 to 1.1.1.1 and 2606:4700:4700::1111 — bypasses DNS entirely, and survives networks that filter ICMP",
+        "Whether ICMP echo is simply filtered: when ping fails but TCP, DNS, or the NCSI endpoint answers, that is reported as 'icmp-filtered' rather than as an invented gateway or router fault",
         "DNS name resolution (microsoft.com)",
         "Captive-portal / NCSI probe (HTTP reachability of www.msftconnecttest.com on port 80)",
         "Configured DNS servers",
-        "The discriminator: internet-by-IP works but DNS fails means a resolver problem, not a connectivity problem"
+        "The discriminator: internet-by-IP works but DNS fails means a resolver problem, not a connectivity problem",
+        "THE EMPTINESS GUARD. The healthy summary is composed from the list of layers that PASSED, and an empty list used to render as the sentence 'Healthy network layers (none): .' with the category graded 'ok' — a green tick on a machine with no network at all. Reproduced by driving the probe with Get-NetAdapter returning nothing, Get-NetRoute answering ObjectNotFound for both families, and Test-NetConnection / Resolve-DnsName throwing. Zero successful measurements is now never 'ok': if nothing could be measured the status is 'unknown' with the finding 'network-unmeasured', which names the layers that could not be read; if every layer WAS measured and every one of them answered no, that is the measured fault 'network-all-layers-down' at severity critical. When some layers passed and others could not be measured, 'network-partially-unmeasured' fires at severity 'unknown' and the summary appends 'Not measured: ...' naming them",
+        "Each reachability probe is tri-state, because catch-into-false is how an unmeasurable layer became a measured-negative one. Test-NetConnection -InformationLevel Quiet RETURNS false for a refused or timed-out connection (a real measurement) and THROWS only when the cmdlet or the stack under it is unavailable; the IP targets are literals, so there is no name for it to fail on. Resolve-DnsName is the exception: its throw IS the measurement (SERVFAIL / NXDOMAIN / timeout), and only a CommandNotFoundException leaves DNS unmeasured. Every fault arm — dns-broken, wan-down, gateway-unreachable, captive-portal-suspected, icmp-filtered, gateway-icmp-blocked — now requires the signal it accuses to have actually been measured, and the layers evidence carries a 'measured' sub-block plus an 'errors' sub-block saying which booleans are real"
       ],
       "fixesAvailable": ["network-flush", "dns-change-resolver", "winsock-reset"],
       "noFixesNote": "There is no separate ip-stack-reset repair: 'netsh int ip reset' is the second step of winsock-reset, because running one without the other is how people end up with a half-reset network stack. The old dns-flush id is now network-flush (flush + DHCP release/renew).",
@@ -77,8 +94,10 @@
       "summary": "Checks the Store package status, its dependency services, and recent app deployment errors.",
       "whatWeCheck": [
         "Microsoft Store package status (should report Ok)",
-        "Dependency services (AppX Deployment, Client License, Install Service, Delivery Optimization) — disabled is the failure signal",
-        "App deployment errors from the last 7 days"
+        "Dependency services (AppX Deployment, Client License, Install Service, Delivery Optimization) — disabled is the failure signal, a deleted service is worse, and a service whose query could not run is reported as '<name>-query-failed' at severity 'unknown' rather than as either (see serviceQueryNote)",
+        "App deployment errors from the last 7 days",
+        "The Windows EDITION first: Enterprise/IoT LTSC (EnterpriseS, EnterpriseSN, IoTEnterprise*) and every Server installation ship WITHOUT the Microsoft Store by design. On those an absent Store is reported as 'store-not-in-this-edition' at severity info and the category stays ok — it is not a fault and there is nothing to re-register",
+        "A failed package query is reported as 'unknown', never as 'no Store problems detected' — a broken or stripped AppX stack is exactly the condition these repairs exist for"
       ],
       "fixesAvailable": ["store-cache-reset", "store-services-enable", "store-reregister", "store-reregister-all"],
       "sources": [
@@ -90,11 +109,11 @@
       "name": "Search & Start menu",
       "summary": "Checks the search indexer, the index database file, and recent crashes of the search and Start menu hosts.",
       "whatWeCheck": [
-        "Windows Search service state and start type",
-        "Indexer and shell host processes",
+        "Windows Search service state and start type. A deleted WSearch is a 'wsearch-missing' fault; a WSearch whose query could not run is 'WSearch-query-failed' at severity 'unknown' and the summary says its state is unknown (see serviceQueryNote)",
+        "Indexer and shell host processes. An empty process list from a FAILED enumeration used to fire 'indexer-process-missing' at severity warning — a fabricated 'the indexer may be crashing' about a list nobody could read; a failed enumeration is now 'process-query-failed' at severity 'unknown' and neither process finding is raised from it",
         "Search index database size anomalies (0 bytes or over 10 GB)",
-        "Windows Search provider errors in the Application log from the last 7 days",
-        "Crashes of SearchHost / StartMenuExperienceHost in the last 7 days (event 1000)"
+        "Windows Search provider errors in the Application log from the last 7 days. An unreadable Application log now raises 'search-log-unreadable' at severity 'unknown' — before, the empty result was mentioned only in the summary sentence, so the category could still resolve to a green 'ok' from a log that was never read",
+        "Crashes of SearchHost / StartMenuExperienceHost / SearchIndexer in the last 7 days (event 1000), matched on the event's named EventData fields (AppName / ModuleName / AppPath) rather than on the rendered message text, which is localized and comes back empty whenever the provider's message resources cannot be rendered"
       ],
       "fixesAvailable": ["shell-restart", "search-index-rebuild"],
       "sources": [
@@ -106,10 +125,11 @@
       "name": "Printing",
       "summary": "Checks the spooler, stuck jobs in the spool folder, printer error states, and recent print errors.",
       "whatWeCheck": [
-        "Print Spooler service state",
+        "Print Spooler service state. A deleted Spooler is a 'Spooler-missing' fault; a Spooler whose query could not run is 'Spooler-query-failed' at severity 'unknown' (see serviceQueryNote), and the enumeration-failure explanation below no longer blames a spooler it never measured",
         "Files sitting in the spool folder (stuck jobs; needs admin)",
         "Print jobs stuck in an Error or Blocked status (works without admin)",
         "Printers reporting Error or Offline",
+        "Whether the printer enumeration ITSELF succeeded. Get-Printer throws precisely when the Spooler is stopped or disabled, when PrintManagement / the Printing-Client feature has been removed by a debloat script, or when enumeration is blocked by policy — exactly the faults this category exists to find. A failed enumeration is reported as 'printer-enumeration-failed' at severity 'unknown' and the summary says the queues could not be read; it is never rendered as \"no printers were enumerated; no stuck print jobs\". A queue that individually refuses Get-PrintJob is reported as 'print-job-query-partial', and the healthy sentence then counts only the queues that answered",
         "Print service errors from the last 7 days"
       ],
       "fixesAvailable": ["spooler-clear-queue"],
@@ -140,9 +160,9 @@
       "name": "Disk space",
       "summary": "Checks free space on every fixed volume against thresholds where Windows itself starts failing.",
       "whatWeCheck": [
-        "Free space percentage per fixed volume",
+        "Free space percentage on every fixed volume, including volumes mounted at a folder path instead of a drive letter. Volumes with no mount point at all (the hidden WinRE/recovery partition) are inventoried but not graded — they are meant to be nearly full — and the count of ungraded volumes is stated in the summary. When the enumeration succeeded but NOTHING was gradeable, the summary says that instead of the vacuous 'All 0 fixed volume(s) ... have healthy free space'",
         "Warning under 15% free; critical under 10% free, or under 20 GB on the system drive (where updates start failing)",
-        "Deep scan only: DISM component-store analysis, parsing 'Component Store Cleanup Recommended' (admin, read-only)"
+        "Deep scan only: DISM component-store analysis, run with the global /English switch and parsing 'Component Store Cleanup Recommended' (admin, read-only). Without /English that line is localized and never matches, which used to make component-cleanup refuse on machines with many GB of reclaimable WinSxS. An unrecognised value is reported as 'unknown', never as 'no cleanup needed'"
       ],
       "fixesAvailable": ["temp-clean", "component-cleanup", "component-cleanup-resetbase"],
       "noFixesNote": "There is no disk-cleanup-run repair, and the real reason is not that cleanmgr cannot be automated — it can. WinUtil uses the documented silent preset 'cleanmgr /d C: /VERYLOWDISK', which needs no interactive /sageset pass at all; the other scriptable route, /sagerun:n, does require an interactive /sageset:n pass first to choose the categories. So the objection is not automatability, it is that /VERYLOWDISK is a fixed, non-negotiable category list chosen by Microsoft for an out-of-space emergency: it clears every user's Recycle Bin, Downloaded Program Files, thumbnail and delivery-optimisation caches, and previous-installation leftovers including C:\\Windows.old — which is the rollback for a Windows upgrade or a FrameForge in-place repair, and once it is gone 'Go back' is gone with it. FrameForge will not delete files the user never saw a list of, and it will not silently destroy a rollback path in a tool whose other half exists to protect one. Disk Cleanup and Storage Sense are both one click away in Settings, with the category list visible, which is where a decision like that belongs. Note what IS offered instead, because each is bounded and reversible-or-recoverable: temp-clean (Temp folders only, per file, in-use files skipped, byte counts reported) and component-cleanup / component-cleanup-resetbase (the WinSxS component store, with the /ResetBase consequence spelled out). There is no separate wu-cache-clear either — the Windows Update cache is renamed (not deleted) by wu-reset, which is where clearing it actually belongs.",
@@ -157,8 +177,9 @@
       "whatWeCheck": [
         "Boot duration in milliseconds for the last 10 boots (Diagnostics-Performance event 100)",
         "Boot degradation events naming the offending app, driver, or service (events 101-110)",
-        "Fast Startup availability and on/off state"
+        "Fast Startup availability and on/off state, read from CallNtPowerInformation(SystemPowerCapabilities) and the hibernation registry values rather than from powercfg's prose, which has no /English switch and is localized on most installs. The English powercfg /a parse is the LAST rung and is anchored on the two full section headers by position (the negative header is located first, because 'available on this system:' is a substring of 'are not available on this system:' — the old substring anchor captured the NOT-available list as if it were the available list and reported Fast Startup as available on machines powercfg had just said it was unavailable on). Fast Startup must appear in exactly one identified section; ambiguous or non-English output yields 'unknown'"
       ],
+      "cannotMeasureNote": "Microsoft-Windows-Diagnostics-Performance/Operational is an administrator-restricted channel and FrameForge's default launch is unelevated, so on a default run this category measures NOTHING. Worse, Get-WinEvent -FilterHashtable reports that denial as 'no events found', which is how an unreadable log used to render as a green tick reading 'no boot-time degradation signals were found'. The category now resolves to status 'unknown' with the finding 'boot-log-unreadable' and says the log needs administrator rights. The slow-boot threshold is also chosen from the system disk's MediaType/BusType instead of one fixed constant, so the sentence about 'this class of hardware' is backed by the hardware it was actually read from.",
       "fixesAvailable": [],
       "noFixesNote": "Diagnosis-only by design. Events 101-110 name the specific app, driver, or service that slowed the boot, and the fix is to deal with that named offender — not to shotgun a startup list or flip Fast Startup, which is a placebo for most slow boots and breaks dual-boot and full-shutdown behaviour when it is on. FrameForge names the offender and the measured boot times in milliseconds, and leaves the decision with the user.",
       "sources": [
@@ -170,9 +191,10 @@
       "name": "Audio",
       "summary": "Checks the two audio services and looks for audio devices stuck in a driver error state.",
       "whatWeCheck": [
-        "Windows Audio and Audio Endpoint Builder service states",
+        "Windows Audio and Audio Endpoint Builder service states. This category asserted the loudest fabricated fault of the five: an unqueryable Get-Service made it report AT CRITICAL SEVERITY that both audio services had been deleted. A service whose query could not run is now '<name>-query-failed' at severity 'unknown' and the category resolves to 'unknown' (see serviceQueryNote)",
         "PnP audio devices reporting an error state (driver problem)",
-        "Sound device status via CIM (Win32_SoundDevice: Error/Degraded)"
+        "Sound device status via CIM (Win32_SoundDevice: Error/Degraded)",
+        "The device inventory is collected BEFORE the services are graded: on a machine with no audio endpoint and no sound device at all (headless, RDP-only, a VM, a mini-PC without a codec) a stopped Audiosrv is reported at severity info — nothing to repair — instead of a critical claim that audio will not work"
       ],
       "fixesAvailable": ["audio-restart"],
       "sources": [
@@ -184,7 +206,7 @@
       "name": "Windows activation",
       "summary": "Reads the Windows license status directly from the licensing service.",
       "whatWeCheck": [
-        "License status of the installed Windows product (licensed, grace period, or notification state)"
+        "License status of EVERY Windows licence row carrying a product key, not just whichever one the licensing provider happened to return first. A machine can legitimately hold more than one (Subscription Activation layers an Enterprise licence over a Pro base; a KMS box can retain an OEM key) and those rows can disagree. The machine is reported as activated when ANY row is Licensed, naming the product and channel that carries it, and the summary says so explicitly when rows disagree"
       ],
       "performanceNote": "Known slow probe: the Software Licensing WMI provider takes several seconds to answer even with a server-side narrowed query — expect this category to dominate scan time.",
       "fixesAvailable": ["activation-retry"],

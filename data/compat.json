@@ -1,0 +1,311 @@
+{
+  "schemaVersion": 1,
+  "note": "UI-facing catalog for engine/compat.ps1, the compatibility self-check. compat.ps1 answers the question that comes before 'is this Windows broken?': which of FrameForge's own checks and repairs can honestly run on THIS machine. Every probe below is read-only — a registry read, a CIM query, a Get-Command lookup, a file-existence test, or a documented Win32 query API. compat.ps1 starts no process, writes no file and changes no setting, and it deliberately never shells out to sfc, dism, powercfg or fsutil to ask a question: those tools answer in the user's language, and this is the one script whose entire job is to be right on a machine whose language we do not know. 'compat.ps1 -Action selftest' fails if any probe here is missing from the engine, if the engine emits a probe this file does not document, or if any repair or health category in data/repairs.json and data/health-checks.json has no capability rule — so this catalog cannot drift from the code.",
+  "verdictVocabulary": {
+    "supported": "Measured available. Every dependency this needs was read and present, so it runs here as designed.",
+    "needs-admin": "It runs, elevated. Unelevated it either cannot start or cannot see all of its signals — and it reports what it could not read rather than assuming it was fine.",
+    "unknown": "FrameForge could NOT determine whether this works here. A signal was unreadable, a dependency could not be probed, or a build gate could not be evaluated. This is the doctrine's first-class 'could not determine' (docs/GAUNTLET.md rule 2) and it deliberately outranks both 'supported' and 'needs-admin', so an unmeasured capability can never be rendered as a green tick.",
+    "degraded": "It runs, with a named limitation. The reason always says exactly what is lost — a skipped step on a managed machine, a partial clean without elevation, an English-only fallback rung that cannot match on this UI language.",
+    "unavailable": "It cannot run here at all. A required tool, cmdlet, service or Windows feature is genuinely absent, or the build gate excludes this machine."
+  },
+  "verdictRankNote": "Verdicts rank unavailable > degraded > unknown > needs-admin > supported. That is the same rank health.ps1 uses for its statuses (critical > warning > unknown > needs-admin > ok), so the two engines never disagree about which of two answers is worse. A capability collects constraints from every rule that applies to it and the WORST one wins; all of them are kept in .reasons so a bug report shows the whole picture, not just the headline.",
+  "triStateNote": "Every signal compat.ps1 records is tri-state: true (measured yes), false (measured no), null (COULD NOT DETERMINE). A probe that failed never becomes a false. The fact table in the output (.facts) is the only thing verdicts are derived from, so any verdict can be traced back to the one reading that produced it — and every fact carries the plain-English sentence shown to the user when it is the reason.",
+  "readOnlyNote": "Nothing here mutates. The two Win32 calls compat.ps1 makes are query-only by construction: EnumDisplaySettings READS the current display mode (ChangeDisplaySettings, the mutating call, is not imported), and CallNtPowerInformation(SystemPowerCapabilities) reads power capabilities. Neither the display mode nor any power setting is changed.",
+  "actions": [
+    {
+      "id": "check",
+      "name": "Run the compatibility check",
+      "summary": "Runs every probe below and returns one JSON document: the machine's capability profile, one verdict per health category and per repair, plus the blockers list and the raw evidence."
+    },
+    {
+      "id": "list",
+      "name": "List what is checked",
+      "summary": "Probe ids, verdict vocabulary and the health/repair ids that will be graded. No probing is done."
+    },
+    {
+      "id": "selftest",
+      "name": "Catalog integrity",
+      "summary": "Read-only. Proves compat.ps1 cannot drift from data/repairs.json, data/health-checks.json or this file: every repair and health id must resolve to a capability rule, every fact id a rule depends on must actually be produced by the probes, every probe must be documented here, and compat.ps1's own OS-identity fallback must agree with engine/_lib.ps1."
+    }
+  ],
+  "exitCodeNote": "0 = a report was produced, however bad the news in it; 2 = invalid input; 1 = compat.ps1 itself failed (or -Action selftest found drift). Deliberately never 3: health.ps1 uses exit 3 for 'constrained-language' and repair.ps1 uses it for 'not-applicable-on-this-build', so a third meaning would make the number useless to a caller. An incompatible machine is a successful report, not an error.",
+  "constrainedLanguageNote": "health.ps1 and the other engines refuse to run under WDAC/AppLocker ConstrainedLanguage and emit a single error document. compat.ps1 does the opposite on purpose: 'your machine is in ConstrainedLanguage' is exactly the answer a user needs, so it runs as far as it can, marks everything that genuinely needs FullLanguage as unavailable WITH that reason, and still exits 0. For the same reason it survives engine/_lib.ps1 failing to load — it falls back to reading the same values itself and reports which rung answered (libraryLoaded).",
+  "probes": [
+    {
+      "id": "os-identity",
+      "group": "Operating system",
+      "name": "Windows edition, build and supported-platform verdict",
+      "question": "Which Windows is this, and is it one FrameForge has actually been validated on?",
+      "whatWeRead": [
+        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion — CurrentBuildNumber, UBR, DisplayVersion, InstallationType, EditionID",
+        "Win32_OperatingSystem — Caption, OperatingSystemSKU, ProductType, BuildNumber",
+        "engine/_lib.ps1 Get-FFOsInfo and Get-FFEdition, which are the single source of truth for the 'supported' rule the repair and image engines are written against"
+      ],
+      "whyItMatters": "FrameForge is validated on Windows 11 CLIENT builds (22000 and newer). Windows 10, Server and Server Core are unvalidated: the read-only health probes still run, but no repair result on them is proven. Several repairs also carry a build gate in data/repairs.json, and that gate is evaluated against this build number.",
+      "gotcha": "CurrentVersion\\ProductName is never used for the generation: on Windows 11 25H2 it literally reads 'Windows 10 Pro'. CurrentBuildNumber is the authority. compat.ps1 keeps its own local fallback read of the same two sources so it still answers when _lib.ps1 cannot be loaded — and selftest asserts the two rungs AGREE on the build and the supported verdict, so the duplication is a checked invariant rather than drift waiting to happen. One value is deliberately NOT taken from the library: isN. An N edition is one whose EditionID ends in a CAPITAL N (ProfessionalN, EnterpriseSN), and the shared rule tests that case-insensitively, so every EditionID merely ending in a lowercase 'n' came back as an N edition — measured: 'Education' and 'CloudEdition' both reported isN = true, which is simply false. compat.ps1 tests the suffix case-SENSITIVELY against a fixed PascalCase identifier and lists the known non-N exceptions as well; isNSource says which rung answered, and the library's own answer is kept beside it as libIsN with an agreement flag so a disagreement is visible in a bug report.",
+      "cannotDetermineMeans": "The build or installation type could not be read, so the platform is reported as undetermined and every build-gated repair becomes 'unknown' — never 'yes'. A repair whose declared minBuild or maxBuild cannot be PARSED is undetermined too, rather than being treated as having no bound at all."
+    },
+    {
+      "id": "os-language",
+      "group": "Operating system",
+      "name": "System UI language, and whether it is English",
+      "question": "What language does this Windows speak, and will FrameForge's English-only fallback rungs match here?",
+      "whatWeRead": [
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\Language — InstallLanguage, then Default (hex LCIDs)",
+        "[CultureInfo]::InstalledUICulture and [CultureInfo]::CurrentUICulture",
+        "HKCU\\Control Panel\\Desktop — PreferredUILanguages",
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\MUI\\UILanguages — which language packs are installed"
+      ],
+      "whyItMatters": "This is the probe the rest of the codebase depends on. Several checks in health.ps1 and repair.ps1 keep a documented ENGLISH-ONLY text parse as their LAST-RESORT rung — sfc's console text, fsutil's 'is NOT Dirty', powercfg's 'Fast Startup', w32tm's status labels, chkdsk's schedule prompt. On a non-English Windows those rungs simply never match. Every one of them sits beneath a structural, locale-free rung, so what is lost is speed and fidelity, never correctness: where no rung answers, the probe reports 'could not determine' rather than guessing. compat.ps1 names the affected checks instead of leaving the user to find out.",
+      "gotcha": "Both the installed system UI language and the CURRENT USER's UI language are read, because an interactive console tool renders in the user's language while a service or elevated context can fall back to the installed one. 'english' is true only when BOTH are English, and null when either could not be read. There is deliberately no 'dism /Get-Intl' rung here — it needs elevation and is itself a text parse.",
+      "cannotDetermineMeans": "FrameForge cannot say whether the English fallback rungs will match, so every check that has one is reported as 'unknown' rather than assumed fine."
+    },
+    {
+      "id": "os-system-drive",
+      "group": "Operating system",
+      "name": "System drive letter",
+      "question": "Which volume is Windows actually on?",
+      "whatWeRead": [
+        "Win32_OperatingSystem.SystemDrive",
+        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SystemRoot",
+        "the %SystemDrive% environment variable"
+      ],
+      "whyItMatters": "Every drive-scoped repair aims at this letter: the chkdsk repairs, temp-clean, and the volume a System Restore checkpoint is created on. All three sources are reported together with whether they agree, because an environment variable on its own is trivially overridable.",
+      "cannotDetermineMeans": "No source answered, so any drive-scoped repair should be treated as unverified until the letter is confirmed."
+    },
+    {
+      "id": "os-architecture",
+      "group": "Operating system",
+      "name": "OS architecture (x64 / arm64 / x86)",
+      "question": "What architecture is this Windows — not this process?",
+      "whatWeRead": [
+        "PROCESSOR_ARCHITEW6432 (set only under WOW64, and it holds the real OS architecture)",
+        "[RuntimeInformation]::OSArchitecture",
+        "Win32_Processor.Architecture (0=x86, 5=ARM, 9=x64, 12=ARM64)",
+        "PROCESSOR_ARCHITECTURE — last, and labelled as the process answer"
+      ],
+      "whyItMatters": "%PROCESSOR_ARCHITECTURE% describes the PROCESS: a 32-bit PowerShell host on 64-bit Windows reports 'x86'. image.ps1 hit exactly that bug and refused perfectly correct x64 media, so the same ladder is used here. The bitness also decides where in-box tools are looked for: a 32-bit host has %SystemRoot%\\System32 silently redirected to SysWOW64, where several of them do not exist, so compat.ps1 resolves them through %SystemRoot%\\Sysnative instead — otherwise it would report 'sfc.exe is missing from this Windows image', which is a confident wrong answer of exactly the kind the doctrine forbids.",
+      "cannotDetermineMeans": "Reported as unknown with the process architecture attached and labelled as such."
+    },
+    {
+      "id": "ff-form-factor",
+      "group": "Form factor",
+      "name": "Laptop or desktop, and Modern Standby",
+      "question": "Is this a portable machine, and does it sleep the modern way?",
+      "whatWeRead": [
+        "Win32_Battery — how many system batteries exist",
+        "Win32_SystemEnclosure.ChassisTypes — the SMBIOS chassis code",
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Power — CsEnabled, PlatformAoAcOverride",
+        "CallNtPowerInformation(SystemPowerCapabilities) via _lib.ps1 — hibernation and Fast Startup capability"
+      ],
+      "whyItMatters": "A laptop behaves differently under every power-related finding, and a Modern Standby machine has no S3 sleep state at all — so anything reasoning about classic sleep does not apply to it. Fast Startup capability is what the boot health category reports against.",
+      "gotcha": "Modern Standby is read from the CsEnabled registry state, not from 'powercfg /a'. powercfg has no /English switch and both its section header and the 'Fast Startup' label are MUI-localized, which is precisely why the prose parse is not used here. Chassis codes that are neither clearly portable nor clearly stationary leave the verdict null instead of being forced into 'desktop'.",
+      "cannotDetermineMeans": "Neither the battery query nor the chassis code answered, so FrameForge does not claim to know the form factor."
+    },
+    {
+      "id": "ff-virtualization",
+      "group": "Form factor",
+      "name": "Virtual machine or physical hardware",
+      "question": "Is this Windows running on real hardware?",
+      "whatWeRead": [
+        "Win32_ComputerSystem — Manufacturer, Model, SystemFamily, HypervisorPresent",
+        "Win32_BIOS.Manufacturer"
+      ],
+      "whyItMatters": "In a VM the physical-disk health and SSD wear counters describe the hypervisor's virtual disks, not real hardware, so a wear or media-error finding is a question for the host rather than for this guest. The disk health category is degraded accordingly.",
+      "gotcha": "HypervisorPresent is reported but DELIBERATELY NOT used as the verdict. On ordinary physical Windows 11 it is true whenever Virtualisation-Based Security, HVCI, WSL2, Windows Sandbox or the Hyper-V role is on — which is most modern desktops. Calling that 'a virtual machine' would be a confident wrong answer. The verdict comes only from firmware vendor identity strings (VMware, VirtualBox, QEMU, Xen, Parallels, Hyper-V, Amazon EC2, Google Compute Engine, Nutanix, oVirt), which are brand names burned into firmware — not localized prose, which is what makes matching them legitimate where matching a message would not be. Two details make that match safe on a machine whose language and firmware casing are unknown. The comparison upper-cases both sides invariantly and then matches case-SENSITIVELY, because PowerShell's -match folds case with the CURRENT culture: measured in a tr-TR session, \"INNOTEK GMBH\" -match 'innotek' is False, so the culture-sensitive version reported a VirtualBox guest on Turkish Windows as physical hardware. And each vendor needle is anchored so it cannot match inside a longer word — without that, a machine whose model contains 'XENON' matched the 'Xen' vendor key and was declared a virtual machine.",
+      "cannotDetermineMeans": "Win32_ComputerSystem returned no manufacturer and model to match against, so neither 'virtual' nor 'physical' is claimed."
+    },
+    {
+      "id": "ff-display",
+      "group": "Form factor",
+      "name": "Primary display resolution and scaling",
+      "question": "What is the screen, at what DPI, and is this a remote session?",
+      "whatWeRead": [
+        "EnumDisplaySettings(ENUM_CURRENT_SETTINGS) — the current mode in real physical pixels",
+        "GetDpiForSystem — the system DPI (96 = 100%)",
+        "GetSystemMetrics(SM_REMOTESESSION) and %SESSIONNAME% — remote-desktop detection",
+        "Win32_VideoController CurrentHorizontalResolution / CurrentVerticalResolution — the fallback"
+      ],
+      "whyItMatters": "FrameForge's window has to fit the screen it is on, high-DPI and small-panel machines are where UI bugs live, and a remote session changes what a shell restart does to the person watching.",
+      "gotcha": "GetSystemMetrics is not used for the size: it is DPI-virtualized for a DPI-unaware host such as powershell.exe and would report scaled, not physical, pixels. EnumDisplaySettings is unaffected. Both calls need Add-Type, so under ConstrainedLanguage the answer falls back to Win32_VideoController — documented as possibly STALE, the same caveat sysinfo.ps1 records for that source.",
+      "cannotDetermineMeans": "Neither the display API nor the CIM fallback answered; the geometry is reported as unknown."
+    },
+    {
+      "id": "rt-powershell",
+      "group": "Runtime",
+      "name": "PowerShell version and host",
+      "question": "Will FrameForge's engines even parse on this host?",
+      "whatWeRead": [
+        "$PSVersionTable — PSVersion, PSEdition, CLRVersion",
+        "$Host.Name",
+        "[Environment]::Is64BitProcess"
+      ],
+      "whyItMatters": "Every engine script is written for Windows PowerShell 5.1 and validated there. An older host cannot parse them at all; a newer one (PowerShell 7) parses them, but nothing on it has been validated, and this report says so rather than implying it has.",
+      "cannotDetermineMeans": "The version could not be read, so FrameForge cannot confirm its engines will run."
+    },
+    {
+      "id": "rt-execution-policy",
+      "group": "Runtime",
+      "name": "Execution policy per scope, and whether Group Policy blocks -ExecutionPolicy Bypass",
+      "question": "Is Group Policy quietly refusing to run FrameForge's engine files?",
+      "whatWeRead": [
+        "Get-ExecutionPolicy -List — every scope",
+        "the NTFS Zone.Identifier stream (Mark-of-the-Web) on each engine .ps1"
+      ],
+      "whyItMatters": "This is the single worst failure mode in the product, because it looks like the app is broken rather than blocked. '-ExecutionPolicy Bypass' sets only the PROCESS scope, and the documented precedence is MachinePolicy > UserPolicy > Process > CurrentUser > LocalMachine — so a Group Policy value OVERRIDES FrameForge's own command line. Under 'Turn on Script Execution = AllSigned' (or Restricted) every unsigned engine file is refused, stdout is empty, and every engine call fails with no stated reason at all.",
+      "gotcha": "RemoteSigned is a CONDITIONAL block: it refuses only files that still carry Mark-of-the-Web, the stream a ZIP-extracted copy keeps. So MOTW is measured too — detection only; FrameForge does not strip the stream by itself. When the policy is RemoteSigned and MOTW could not be read, the result is 'undetermined', not 'safe'. And the Electron host's in-memory scriptblock workaround has a real hole this report states rather than assumes away: repair.ps1 re-invokes health.ps1 as a CHILD process with -File, so a blocked policy breaks repair DETECTION even when the app itself started. Every repair with a healthCheck is degraded for that reason.",
+      "cannotDetermineMeans": "The policy could not be read, so FrameForge cannot tell you in advance whether Group Policy will block its engines — which is not the same as saying the policy is fine. The same applies when Get-ExecutionPolicy -List answers but does not report the MachinePolicy or UserPolicy scope: the missing scope is exactly the one that could be set to AllSigned, so the verdict stays undetermined instead of defaulting to 'nothing blocks this'."
+    },
+    {
+      "id": "rt-lockdown",
+      "group": "Runtime",
+      "name": "Application control (WDAC / AppLocker) and PowerShell language mode",
+      "question": "Is an application-control policy constraining what FrameForge may execute?",
+      "whatWeRead": [
+        "$ExecutionContext.SessionState.LanguageMode",
+        "%__PSLockdownPolicy%",
+        "Win32_DeviceGuard (root\\Microsoft\\Windows\\DeviceGuard) — CodeIntegrityPolicyEnforcementStatus, UsermodeCodeIntegrityPolicyEnforcementStatus, SecurityServicesRunning",
+        "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\SrpV2 — AppLocker rules present",
+        "the AppIDSvc service start type"
+      ],
+      "whyItMatters": "Under WDAC or AppLocker, scripts outside an allowed path run in ConstrainedLanguage, where the identity casts, Add-Type and [xml] casts the engines rely on are all blocked. health.ps1 and the other engines refuse to run in that mode. The CAUSE is reported alongside the consequence, because a user told only 'ConstrainedLanguage' has nowhere to go with it.",
+      "cannotDetermineMeans": "The language mode is always readable; the Device Guard and AppLocker evidence beside it may not be, and is reported as unread rather than as absent."
+    },
+    {
+      "id": "rt-elevation",
+      "group": "Runtime",
+      "name": "Elevation state, and whether this user could elevate at all",
+      "question": "Is FrameForge elevated — and if not, is that fixable by this user?",
+      "whatWeRead": [
+        "WindowsPrincipal.IsInRole(Administrator) — the exact answer, needs FullLanguage",
+        "GetTokenInformation(TokenElevationType) — 2 = Full (elevated), 3 = Limited (a UAC-filtered administrator who has not elevated), 1 = Default (no split token)",
+        "a READ of the administrator-ACLed key HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SPP\\Clients, as the last-resort rung that still works under application control",
+        "Get-LocalGroupMember -SID S-1-5-32-544, matched against the current user's SID, for 'could this user elevate'",
+        "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System — EnableLUA, ConsentPromptBehaviorAdmin",
+        "engine/_lib.ps1 Test-Admin — recorded for comparison only, never used as the answer here"
+      ],
+      "whyItMatters": "Three different questions that are usually collapsed into one. 'Not elevated' is a fixable inconvenience if the user is an administrator; if they are not, 'run as administrator' is advice they cannot act on, and FrameForge says so instead.",
+      "gotcha": "The obvious approach is wrong, and it was measured wrong here. A UAC-filtered administrator token carries S-1-5-32-544 as DENY-ONLY: 'whoami /groups' lists it and .NET's WindowsIdentity.Groups filters it out entirely, so walking .Groups for that SID reports an ordinary unelevated administrator as NOT an administrator — and the tool then tells the administrator sitting in front of it to go find an administrator. TokenElevationType says it outright instead. The group is addressed by SID because the NAME is localized. _lib.ps1's Test-Admin has the opposite failure (its fallback matches that deny-only SID in whoami output and returns true for an unelevated admin), so its answer is recorded beside this one with an agreement flag rather than trusted — health.ps1 and repair.ps1 use Test-Admin, and a disagreement belongs in a bug report. The last-resort registry rung is deliberately asymmetric: a PROVEN access denial on the administrator-only key means not elevated, because an elevated session is not denied it; a SUCCESSFUL read does NOT mean elevated, because it is also what a build that leaves the key readable to ordinary users would do, and compat.ps1 cannot read that key's ACL to tell the two apart. A successful read therefore leaves elevation undetermined and records what happened as evidence, instead of turning an assumption about an ACL into a green tick.",
+      "cannotDetermineMeans": "Elevation could not be established, so FrameForge cannot say which administrator-gated signals will be readable. Every capability that depends on elevation becomes 'unknown' rather than 'needs-admin' or 'supported', and a top-level 'elevation-undetermined' blocker says so once."
+    },
+    {
+      "id": "cap-inventory",
+      "group": "Capabilities",
+      "name": "Tools, cmdlets, services and Windows features FrameForge binds to",
+      "question": "Does everything FrameForge calls actually exist on this machine?",
+      "whatWeRead": [
+        "in-box tools by file existence: Dism.exe, sfc.exe, chkdsk.exe, fsutil.exe, netsh.exe, ipconfig.exe, powercfg.exe, w32tm.exe, cscript.exe, WSReset.exe, UsoClient.exe, slmgr.vbs, sc.exe, whoami.exe",
+        "cmdlets by Get-Command: Repair-WindowsImage, Get-/Enable-WindowsOptionalFeature, Repair-Volume, Get-Volume, Get-PhysicalDisk, Get-StorageReliabilityCounter, Get-/Add-AppxPackage, Get-AppxProvisionedPackage, Get-/Remove-BitsTransfer, Set-DnsClientServerAddress, Resolve-DnsName, Checkpoint-Computer, Enable-ComputerRestore, Get-ComputerRestorePoint, Get-BitLockerVolume, the service cmdlets, Get-HotFix, Get-WinEvent, Repair-WinGetPackageManager",
+        "services by their registry key under HKLM\\SYSTEM\\CurrentControlSet\\Services: wuauserv, bits, cryptsvc, msiserver, appidsvc, DoSvc, UsoSvc, AppXSvc, ClipSVC, InstallService, WSearch, Spooler, Audiosrv, AudioEndpointBuilder, w32time, VSS, swprv, TrustedInstaller",
+        "BitLocker, Microsoft Store and optional-feature availability via _lib.ps1 Test-FFCapability",
+        "System Restore: policy DisableSR/DisableConfig, RPSessionInterval, the checkpoint cmdlets, and the VSS and swprv service state",
+        "winget: Get-Command, then the Microsoft.DesktopAppInstaller package, then the Microsoft.WinGet.Client module"
+      ],
+      "whyItMatters": "This is what turns a repair from 'offered' into 'offered and it will actually work'. A service read from its registry key is present or genuinely deleted — 'sc delete' is what the popular gaming-debloat scripts do, and Set-Service cannot recreate a deleted service, so absence here is a real finding rather than 'not applicable'. System Restore gets its own ladder because six repairs create a checkpoint as their FIRST step and ABORT if they cannot: policy, the engine being switched off for the volume, missing cmdlets and a deleted or disabled VSS are four separate ways for that to be false, and each is read separately so the reason can be named.",
+      "gotcha": "Nothing here is executed. Presence is decided by file existence, command resolution and registry keys — never by running the tool and reading what it says.",
+      "cannotDetermineMeans": "A dependency that could not be probed makes every capability that needs it 'unknown' — not 'unavailable', and certainly not 'supported'. The System Restore ladder is explicit about this: if the Group Policy key, RPSessionInterval, the checkpoint cmdlets or the VSS service key could not be READ (as opposed to being genuinely absent), the answer is undetermined rather than 'System Restore is available'. A read that failed is never allowed to become a promise that the next checkpoint will succeed."
+    },
+    {
+      "id": "mgmt-management",
+      "group": "Management",
+      "name": "Domain, Entra ID, MDM, WSUS and the policy keys that change what FrameForge may do",
+      "question": "Is this machine somebody else's to manage?",
+      "whatWeRead": [
+        "Win32_ComputerSystem — PartOfDomain, Domain, DomainRole",
+        "HKLM\\SYSTEM\\CurrentControlSet\\Control\\CloudDomainJoin\\JoinInfo — Microsoft Entra ID (Azure AD) join",
+        "HKCU\\...\\WorkplaceJoin\\JoinInfo — workplace join",
+        "HKLM\\SOFTWARE\\Microsoft\\Enrollments — MDM enrolment with a DiscoveryServiceFullURL and EnrollmentState 1",
+        "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate and \\AU — WUServer, UseWUServer, TargetReleaseVersionInfo",
+        "HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters — Type (NT5DS = domain-hierarchy time)",
+        "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Servicing — where optional-feature payload may come from",
+        "the policy keys from _lib.ps1 Get-FFPolicySnapshot, plus PowerShell, Appx, AppLocker and System Restore policy"
+      ],
+      "whyItMatters": "Management changes what FrameForge should DO, not just what it can. On a WSUS-pinned or MDM-enrolled machine a held-back update is a CONFIGURATION, and 'fixing' it means fighting an administrator — so the Windows Update reset deliberately skips the WinHTTP proxy reset and the WSUS client-identity clear there, and this report names that as a limitation rather than hiding it. On a domain member whose W32Time Type is NT5DS, pointing the clock at a public NTP pool would break Kerberos, so ntp-resync skips that step too.",
+      "gotcha": "Entra ID join is read from the CloudDomainJoin registry key, not from 'dsregcmd' prose. A WUServer value on its own is not management: AU\\UseWUServer = 1 is what makes the client actually use it, and both are required before this reports a WSUS-managed machine. The bare key HKLM\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device exists on stock consumer Windows 11, so its presence alone is never treated as MDM enrolment.",
+      "cannotDetermineMeans": "A policy key that could not be READ is reported as unread (null), which is not the same as absent — a denied read never becomes 'this machine is unmanaged'. The MDM enumeration counts the enrolment subkeys it could not open and reports 'no MDM enrolment' only when every one of them was actually read; one readable enrolment still proves enrolment on its own."
+    }
+  ],
+  "capabilityNote": "Every health category in data/health-checks.json and every repair in data/repairs.json gets one row in the output, resolved FROM those catalogs so the list cannot drift. Each row carries the verdict, the single worst reason in plain English, every reason that applied, and the fact ids it depends on ('requires' — absence makes it unavailable; 'softens' — absence degrades it). Repair rows additionally carry tier, requiresAdmin, requiresReboot, reversible, restorePoint and whether the catalog's build gate lets them run here. A row with no constraint at all says which dependencies were measured, or says plainly that it declares none; it never claims that dependencies were checked when the rule had none to check. Every reason carries a code from constraintCodes and a 'documented' flag, and -Action selftest fails if the engine can emit a code this file does not document.",
+  "blockersNote": "The output's .blockers array says once, plainly, at the top, why a machine is red — so a user does not have to read forty capability rows to find out. Severity is 'blocking' (nothing will work until this is resolved), 'warning' (a real limitation), or 'info' (worth knowing, nothing to do). Undetermined states get their own blockers too — elevation, platform, execution policy, UI language, restore point, a failed probe, and a count of capabilities that could not be determined — so a machine where FrameForge could not measure something never looks, from the top of the report, like a machine where everything was fine.",
+  "sources": [
+    "https://learn.microsoft.com/powershell/module/microsoft.powershell.security/set-executionpolicy",
+    "https://learn.microsoft.com/powershell/scripting/learn/remoting/jea/overview#constrained-language-mode",
+    "https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-enumdisplaysettingsw",
+    "https://learn.microsoft.com/windows/win32/api/powrprof/nf-powrprof-callntpowerinformation",
+    "https://learn.microsoft.com/windows-hardware/design/device-experiences/modern-standby",
+    "https://learn.microsoft.com/windows/win32/winprog64/file-system-redirector",
+    "https://learn.microsoft.com/windows/deployment/update/waas-wu-settings",
+    "https://learn.microsoft.com/windows-server/administration/windows-commands/w32tm"
+  ],
+  "probeFailureNote": "Each probe runs in isolation. If one fails, its entry in .probes is replaced by a placeholder carrying probeFailed:true and probeError, every fact it would have produced is null, every capability that depended on it is 'unknown', and a 'probe-failed:<probe id>' blocker names it. A single failed probe costs that probe and nothing else — it does not discard the report, and it never leaves a measured-looking answer behind.",
+  "triStateReadNote": "Registry reads are tri-state at the source. present:true means the value or key was read; false means it genuinely is not there; null means the read FAILED. accessDenied is recorded separately and is tri-state too, because 'the read failed' and 'the read failed BECAUSE THIS TOKEN IS NOT ALLOWED' are different facts and only some conclusions may be drawn from the second. Reads use -LiteralPath rather than -Path so a key whose name contains [ ] ? or * cannot silently match nothing and read as absent.",
+  "outputFields": {
+    "ok": "A report was produced. It does not mean the news in the report is good.",
+    "capabilitiesComplete": "False when a catalog could not be read, so the capability list and the totals are MISSING entries entirely rather than merely reporting them as unavailable. The summary line and a 'catalog-unreadable' blocker say so too.",
+    "totals": "One count per verdict, over the rows actually present in .capabilities.",
+    "blockers": "The reasons a machine is red, said once at the top. See blockerIds.",
+    "capabilities": "One row per health category and per repair. Each row carries verdict, the single worst reason, every reason that applied (with its code), and the fact ids it depends on.",
+    "probes": "The raw evidence every verdict traces back to, including probeFailed/probeError for a probe that did not run.",
+    "facts": "The fact table. Every entry is tri-state: value true / false / null, where null is 'could not determine'.",
+    "languageMode": "FullLanguage, ConstrainedLanguage, or Unknown.",
+    "libraryLoaded": "Whether engine/_lib.ps1 could be dot-sourced. When false, compat.ps1 answers from its own local rungs and says which one.",
+    "catalogError": "The catalog that could not be read, if any."
+  },
+  "constraintCodes": {
+    "powershell-too-old": "unavailable: the PowerShell version on this host cannot parse FrameForge's engines.",
+    "powershell-version-undetermined": "unknown: the PowerShell version could not be read, so whether the engines parse here was not established.",
+    "constrained-language": "unavailable: an application-control policy (WDAC/AppLocker) has PowerShell in ConstrainedLanguage, and the health and repair engines refuse to run in that mode.",
+    "language-mode-undetermined": "unknown: the PowerShell language mode could not be read.",
+    "unvalidated-platform": "degraded: this is not a Windows 11 client build, so results here are unproven. Read-only checks still run; repairs are not refused by the engine unless the catalog's build gate refuses them.",
+    "platform-undetermined": "unknown: the Windows build or installation type could not be read, so the platform could not be confirmed.",
+    "missing-requirement": "unavailable: something this capability requires was measured and is absent.",
+    "requirement-undetermined": "unknown: something this capability requires could not be probed, so whether it is present is not known.",
+    "missing-optional-dependency": "degraded: an optional dependency is absent, so this runs with less signal than designed.",
+    "optional-dependency-undetermined": "unknown: an optional dependency could not be probed.",
+    "english-only-fallback-lost": "degraded: this check keeps a documented English-only LAST-RESORT rung, and this Windows does not present an English UI, so that rung cannot match. The check falls back to its structural rung, and where there is none it reports 'could not determine'.",
+    "ui-language-undetermined": "unknown: whether this Windows presents an English UI could not be read, so whether the English-only fallback rungs can match here is not known.",
+    "needs-elevation": "needs-admin: this needs administrator rights to run as designed.",
+    "elevation-undetermined": "unknown: whether this process is elevated could not be determined.",
+    "rule-evaluation-failed": "unknown: compat.ps1's own capability rule for this entry threw while being evaluated, so this capability was NOT judged. It is reported as undetermined rather than as passing.",
+    "no-capability-rule": "unknown: data/repairs.json carries a repair compat.ps1 has no capability rule for, so its requirements were never checked. -Action selftest fails on this drift.",
+    "catalog-field-missing": "unknown: the catalog does not declare a field this verdict depends on (requiresAdmin, restorePoint), and a missing field is not a measured 'no'.",
+    "not-applicable-on-this-build": "unavailable: the catalog's minBuild / maxBuild / generation gate excludes this Windows.",
+    "build-undetermined": "unknown: this repair declares a build or generation requirement that could not be evaluated, because the build could not be read or the declared bound could not be parsed.",
+    "restore-point-unavailable": "degraded: this repair creates a System Restore checkpoint as its first step and aborts if it cannot, and a checkpoint cannot be created here.",
+    "restore-point-undetermined": "unknown: whether a checkpoint can be created here could not be determined, so FrameForge will not promise this repair will start.",
+    "child-script-blocked-by-policy": "degraded: this repair detects and verifies by running engine/health.ps1 as a CHILD process with -File, and Group Policy refuses unsigned script files here. The Electron host's in-memory workaround does not reach that inner call.",
+    "execution-policy-undetermined": "unknown: whether Group Policy refuses unsigned script files could not be determined, so whether this repair's detection pass can run is not known.",
+    "virtual-storage": "degraded: this is a virtual machine, so physical-disk health and SSD wear counters describe the hypervisor's virtual disks.",
+    "no-store-on-this-edition": "unavailable: this Windows edition ships without the Microsoft Store.",
+    "store-undetermined": "unknown: whether the Microsoft Store is available on this edition could not be determined.",
+    "client-only-flow": "unavailable: this repair hands you a Windows CLIENT Settings flow that a Server installation does not have.",
+    "ltsc-recovery-flow": "degraded: this is an LTSC/IoT edition, where the in-place 'Reinstall now' repair option is not offered on every build.",
+    "remote-session": "degraded: you are in a remote-desktop session, so restarting the shell restarts THIS session's shell and the screen blanks briefly.",
+    "domain-time-hierarchy": "degraded: this machine takes its clock from the domain hierarchy (W32Time Type = NT5DS), so the repair deliberately skips the step that points the clock at a public NTP pool.",
+    "partial-without-admin": "degraded: unelevated this cleans only your own %TEMP%; the machine-wide %SystemRoot%\\Temp folder is skipped.",
+    "network-not-probed": "degraded: this repair reaches the network, and compat.ps1 makes no network request of its own, so reachability is NOT part of this verdict.",
+    "server-app-installer": "degraded: this is a Server installation, where the App Installer package that provides winget is not part of the image.",
+    "no-store-delivery": "degraded: the Microsoft Store is not available on this edition, which is how the package this repair reinstalls is normally delivered.",
+    "managed-update-client": "degraded: this machine is managed (WSUS-pinned, MDM-enrolled or domain-joined), so the Windows Update reset deliberately SKIPS the WinHTTP proxy reset and the WSUS client-identity clear.",
+    "payload-source-blocked": "degraded: Group Policy forbids fetching optional-feature payload from Windows Update, so enabling a feature whose payload was removed needs -SourcePath pointing at installation media.",
+    "wsus-payload-source": "degraded: Windows Update is pinned to a WSUS server that commonly does not carry Features on Demand payload, and policy does not allow going straight to Windows Update for it. FrameForge has NOT contacted that server — this is a warning from configuration, not a measurement."
+  },
+  "blockerIds": {
+    "constrained-language": "blocking. An application-control policy has PowerShell in ConstrainedLanguage; the other engines refuse to run.",
+    "execution-policy-blocks-script-files": "blocking. Group Policy refuses FrameForge's unsigned engine files, and -ExecutionPolicy Bypass cannot override a policy scope.",
+    "powershell-too-old": "blocking. This PowerShell cannot parse the engines.",
+    "catalog-unreadable": "blocking. A catalog could not be read, so this report is INCOMPLETE: capabilities are missing from the list entirely, not merely marked unavailable.",
+    "unvalidated-platform": "warning. Not a Windows 11 client build; read-only checks still run, repair results are unproven.",
+    "platform-undetermined": "warning. The platform could not be confirmed either way.",
+    "not-elevated": "warning. Running unelevated, so the checks and repairs marked needs-admin cannot run as designed.",
+    "elevation-undetermined": "warning. Whether this process is elevated could not be determined at all.",
+    "execution-policy-undetermined": "warning. Whether Group Policy blocks the engine files could not be determined.",
+    "no-restore-point": "warning. No System Restore checkpoint can be created here, and six repairs abort at that step unless -NoRestorePoint is passed deliberately.",
+    "restore-point-undetermined": "warning. Whether a checkpoint can be created could not be determined.",
+    "undetermined-capabilities": "warning. Some capabilities could not be determined; each row carries the reading that failed.",
+    "probe-failed:<probe id>": "warning. That probe threw, so everything it would have measured is undetermined rather than assumed.",
+    "non-english-ui": "info. Where a probe kept an English-only last-resort rung, it now reports 'could not determine' instead of guessing. Nothing to do.",
+    "ui-language-undetermined": "info. The UI language could not be read, so whether those rungs can match here is unknown.",
+    "virtual-machine": "info. Hardware-facing findings describe the hypervisor's virtual devices; take them to the host."
+  }
+}

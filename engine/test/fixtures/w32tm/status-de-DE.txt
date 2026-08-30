@@ -1,0 +1,9 @@
+Sprungindikator: 0(keine Warnung)
+Stratum: 3 (sekundäre Referenz - synchronisiert über (S)NTP)
+Präzision: -23 (119.209ns pro Tick)
+Wurzelverzögerung: 0.0223862s
+Wurzelstreuung: 0.7757617s
+Referenz-ID: 0xC0A80101 (Quell-IP:  192.168.1.1)
+Letzte erfolgreiche Synchronisierungszeit: 30.08.2026 09:12:34
+Quelle: time.windows.com,0x8
+Abrufintervall: 10 (1024s)

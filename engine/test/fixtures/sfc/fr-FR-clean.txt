@@ -1,0 +1,8 @@
+
+Début de l'analyse du système. Cette opération peut prendre du temps.
+
+Début de la phase de vérification de l'analyse du système.
+Vérification 100 % terminée.
+
+La protection des ressources Windows n'a trouvé aucune violation d'intégrité.
+

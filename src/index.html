@@ -23,64 +23,70 @@
 
   <div class="shell">
     <!-- ===== NavigationView pane (sits on Mica) ===== -->
-    <nav class="navpane">
+    <nav class="navpane" aria-label="Main">
       <div class="nav-profile">
-        <span class="glyph">&#xE977;</span>
+        <span class="glyph" aria-hidden="true">&#xE977;</span>
         <div>
           <div class="nav-profile-name" id="navRigName">This PC</div>
           <div class="nav-profile-sub" id="navRigSub">Detecting hardware&hellip;</div>
         </div>
       </div>
 
+      <!-- Placeholder text is not a dependable accessible name and disappears on input,
+           so the field carries a real label of its own. -->
       <div class="nav-search">
-        <input id="navSearch" type="text" placeholder="Find a setting" spellcheck="false" autocomplete="off">
-        <span class="glyph">&#xE721;</span>
+        <input id="navSearch" type="text" role="searchbox" aria-label="Find a setting"
+               placeholder="Find a setting" spellcheck="false" autocomplete="off">
+        <span class="glyph" aria-hidden="true">&#xE721;</span>
       </div>
 
       <div class="nav-scroll">
         <button class="nav-item active" data-view="dashboard">
-          <span class="glyph">&#xE80F;</span><span class="nav-label">Home</span>
+          <span class="glyph" aria-hidden="true">&#xE80F;</span><span class="nav-label">Home</span>
         </button>
 
         <button class="nav-item" data-view="boost">
-          <span class="glyph">&#xE945;</span><span class="nav-label">One-click boost</span>
+          <span class="glyph" aria-hidden="true">&#xE945;</span><span class="nav-label">One-click boost</span>
         </button>
         <button class="nav-item" data-view="tweaks">
-          <span class="glyph">&#xE713;</span><span class="nav-label">Tweaks</span>
+          <span class="glyph" aria-hidden="true">&#xE713;</span><span class="nav-label">Tweaks</span>
           <span class="nav-badge" id="tweaksAppliedBadge"></span>
         </button>
         <button class="nav-item" data-view="focus">
-          <span class="glyph">&#xE7FC;</span><span class="nav-label">Game focus</span>
+          <span class="glyph" aria-hidden="true">&#xE7FC;</span><span class="nav-label">Game focus</span>
         </button>
         <button class="nav-item" data-view="nvidia" id="navNvidia" hidden>
-          <span class="glyph">&#xE950;</span><span class="nav-label">NVIDIA</span>
+          <span class="glyph" aria-hidden="true">&#xE950;</span><span class="nav-label">NVIDIA</span>
         </button>
 
         <button class="nav-item" data-view="benchmark">
-          <span class="glyph">&#xEC4A;</span><span class="nav-label">Benchmark</span>
+          <span class="glyph" aria-hidden="true">&#xEC4A;</span><span class="nav-label">Benchmark</span>
         </button>
 
         <button class="nav-item" data-view="health">
-          <span class="glyph">&#xE9D9;</span><span class="nav-label">Windows health</span>
+          <span class="glyph" aria-hidden="true">&#xE9D9;</span><span class="nav-label">Windows health</span>
           <span class="nav-badge" id="healthBadge"></span>
         </button>
         <button class="nav-item" data-view="repair">
-          <span class="glyph">&#xE90F;</span><span class="nav-label">Repair</span>
+          <span class="glyph" aria-hidden="true">&#xE90F;</span><span class="nav-label">Repair</span>
         </button>
 
         <button class="nav-item" data-view="safety">
-          <span class="glyph">&#xEA18;</span><span class="nav-label">Safety and recovery</span>
+          <span class="glyph" aria-hidden="true">&#xEA18;</span><span class="nav-label">Safety and recovery</span>
         </button>
       </div>
 
       <div class="nav-foot">
         <button class="nav-item nav-toggle-row" id="modeSwitch" role="switch" aria-checked="false" title="Show every individual tweak and advanced controls">
-          <span class="glyph">&#xEC7A;</span><span class="nav-label">Advanced mode</span>
+          <span class="glyph" aria-hidden="true">&#xEC7A;</span><span class="nav-label">Advanced mode</span>
+          <!-- A text state, matching .fswitch's On/Off: the track alone is colour-only
+               and becomes unreadable under a High Contrast theme. -->
+          <span class="mini-switch-state" aria-hidden="true"></span>
           <span class="mini-switch" aria-hidden="true"></span>
           <span data-mode="simple" hidden></span><span data-mode="advanced" hidden></span>
         </button>
         <button class="nav-item" id="adminPill">
-          <span class="glyph">&#xE7EF;</span><span class="nav-label" id="adminText">Checking access&hellip;</span>
+          <span class="glyph" aria-hidden="true">&#xE7EF;</span><span class="nav-label" id="adminText">Checking access&hellip;</span>
           <span class="admin-dot"></span>
         </button>
       </div>
@@ -88,11 +94,15 @@
 
     <!-- ===== Content region ===== -->
     <main class="content" id="content">
+      <!-- App-wide condition that explains why engine calls may be failing (e.g. a Group
+           Policy execution-policy block). Hidden until there is something measured to say. -->
+      <div id="globalNotice" class="global-notice" hidden></div>
+
       <!-- Search results (no nav entry; reached by typing in "Find a setting") -->
       <section class="view" id="view-search">
         <div class="page">
           <h1 class="page-title" id="searchTitle">Search results</h1>
-          <div id="searchResults"></div>
+          <div id="searchResults" role="status" aria-live="polite"></div>
         </div>
       </section>
 
@@ -115,7 +125,7 @@
           <div class="card-list" id="profileGrid"></div>
           <div class="section-head"><h2>How this stays safe</h2></div>
           <div class="infobar" id="boostNote">
-            <span class="glyph">&#xE946;</span>
+            <span class="glyph" aria-hidden="true">&#xE946;</span>
             <div class="ib-body">FrameForge records the exact previous value of every setting before changing it.
               Use <b>Revert everything</b> any time to restore your system precisely. Nothing here deletes files or "cleans" your registry.</div>
           </div>
@@ -137,18 +147,18 @@
           <h1 class="page-title">Benchmark</h1>
           <div class="card-list">
             <div class="scard">
-              <span class="scard-icon">&#xE7FC;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE7FC;</span>
               <div class="scard-body">
                 <div class="scard-title">Target game or app</div>
                 <div class="scard-desc">Must be running and actively rendering frames</div>
               </div>
               <div class="scard-control">
                 <span class="fcombo"><select id="benchTarget" style="min-width:248px"><option value="">Refresh to list running windows&hellip;</option></select></span>
-                <button class="fbtn" id="benchRefresh"><span class="glyph">&#xE72C;</span>Refresh</button>
+                <button class="fbtn" id="benchRefresh"><span class="glyph" aria-hidden="true">&#xE72C;</span>Refresh</button>
               </div>
             </div>
             <div class="scard">
-              <span class="scard-icon">&#xE823;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE823;</span>
               <div class="scard-body">
                 <div class="scard-title">Capture length</div>
                 <div class="scard-desc">Longer runs average out more run-to-run noise</div>
@@ -161,7 +171,7 @@
               </div>
             </div>
             <div class="scard">
-              <span class="scard-icon">&#xE768;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE768;</span>
               <div class="scard-body">
                 <div class="scard-title">Record a run</div>
                 <div class="scard-desc" id="benchStatus">Record a baseline, change one thing, then record after</div>
@@ -182,14 +192,14 @@
         <div class="page">
           <h1 class="page-title">Game focus</h1>
           <div class="scard">
-            <span class="scard-icon">&#xE7FC;</span>
+            <span class="scard-icon" aria-hidden="true">&#xE7FC;</span>
             <div class="scard-body">
               <div class="scard-title">Reclaimable memory</div>
               <div class="scard-desc">Total RAM held by background apps that are safe to close</div>
             </div>
             <div class="scard-control">
               <span class="scard-value" id="reclaimMB">&ndash;</span>
-              <button class="fbtn" id="focusRefresh"><span class="glyph">&#xE72C;</span>Rescan</button>
+              <button class="fbtn" id="focusRefresh"><span class="glyph" aria-hidden="true">&#xE72C;</span>Rescan</button>
               <button class="fbtn accent" id="focusClose" disabled>Close selected</button>
             </div>
           </div>
@@ -213,12 +223,12 @@
           <div class="section-head"><h2>Every setting</h2></div>
           <div class="card-list">
             <div class="scard clickable" id="nvAdvToggle" data-act="nv-open-adv" role="button" tabindex="0">
-              <span class="scard-icon">&#xE9D5;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE9D5;</span>
               <div class="scard-body">
                 <div class="scard-title">All NVIDIA settings, one at a time</div>
                 <div class="scard-desc">Browse every setting one at a time and build a custom profile from any subset</div>
               </div>
-              <span class="chev">&#xE76C;</span>
+              <span class="chev" aria-hidden="true">&#xE76C;</span>
             </div>
           </div>
           <div class="section-head"><h2>Cargo-cult tweaks we do not ship</h2></div>
@@ -268,7 +278,7 @@
           <h1 class="page-title">Safety and recovery</h1>
           <div class="card-list">
             <div class="scard">
-              <span class="scard-icon">&#xE777;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE777;</span>
               <div class="scard-body">
                 <div class="scard-title">System restore point</div>
                 <div class="scard-desc">A Windows restore point taken before tuning, on top of the per-tweak revert<span id="restoreStatus"></span></div>
@@ -276,7 +286,7 @@
               <div class="scard-control"><button class="fbtn" id="btnRestorePoint">Create restore point</button></div>
             </div>
             <div class="scard">
-              <span class="scard-icon">&#xE777;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE777;</span>
               <div class="scard-body">
                 <div class="scard-title">Revert everything</div>
                 <div class="scard-desc">Undo every change FrameForge made, restoring each setting to its exact previous value<span id="revertAllStatus"></span></div>
@@ -284,7 +294,7 @@
               <div class="scard-control"><button class="fbtn" id="btnRevertAll">Revert all tweaks</button></div>
             </div>
             <div class="scard" id="adminCard" hidden>
-              <span class="scard-icon">&#xE7EF;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE7EF;</span>
               <div class="scard-body">
                 <div class="scard-title">Administrator access</div>
                 <div class="scard-desc">Some tweaks are system-wide and need elevation. FrameForge never applies them silently.</div>
@@ -295,36 +305,36 @@
           <div class="section-head"><h2>What FrameForge will and will not do</h2></div>
           <div class="card-list">
             <div class="scard">
-              <span class="scard-icon">&#xE9D5;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE9D5;</span>
               <div class="scard-body">
                 <div class="scard-title">Every change is documented</div>
                 <div class="scard-desc">Each tweak and repair names the exact registry key, service, or command it runs, with its source.</div>
               </div>
-              <div class="scard-control"><span class="status good"><span class="glyph">&#xE73E;</span>Always</span></div>
+              <div class="scard-control"><span class="status good"><span class="glyph" aria-hidden="true">&#xE73E;</span>Always</span></div>
             </div>
             <div class="scard">
-              <span class="scard-icon">&#xE777;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE777;</span>
               <div class="scard-body">
                 <div class="scard-title">Prior state is captured before anything changes</div>
                 <div class="scard-desc">Undo restores the value that was actually there, not one we assume is the default.</div>
               </div>
-              <div class="scard-control"><span class="status good"><span class="glyph">&#xE73E;</span>Always</span></div>
+              <div class="scard-control"><span class="status good"><span class="glyph" aria-hidden="true">&#xE73E;</span>Always</span></div>
             </div>
             <div class="scard">
-              <span class="scard-icon">&#xEC4A;</span>
+              <span class="scard-icon" aria-hidden="true">&#xEC4A;</span>
               <div class="scard-body">
                 <div class="scard-title">Effects are measured, not asserted</div>
                 <div class="scard-desc">Real frametimes before and after; a change inside run-to-run noise is reported as no change.</div>
               </div>
-              <div class="scard-control"><span class="status good"><span class="glyph">&#xE73E;</span>Always</span></div>
+              <div class="scard-control"><span class="status good"><span class="glyph" aria-hidden="true">&#xE73E;</span>Always</span></div>
             </div>
             <div class="scard">
-              <span class="scard-icon">&#xE7BA;</span>
+              <span class="scard-icon" aria-hidden="true">&#xE7BA;</span>
               <div class="scard-body">
                 <div class="scard-title">No invented problems and no placebo cleanup</div>
                 <div class="scard-desc">No fabricated "junk found" counts, no registry cleaning, no RAM optimizers. "Nothing is broken here" is a real result.</div>
               </div>
-              <div class="scard-control"><span class="status crit"><span class="glyph">&#xE711;</span>Never</span></div>
+              <div class="scard-control"><span class="status crit"><span class="glyph" aria-hidden="true">&#xE711;</span>Never</span></div>
             </div>
           </div>
         </div>
@@ -332,8 +342,12 @@
     </main>
   </div>
 
-  <!-- Toasts -->
-  <div class="toast-stack" id="toasts"></div>
+  <!-- Toasts are the app's only channel for operational results, so they live in live
+       regions: errors and warnings assertive, everything else polite. -->
+  <div class="toast-host" id="toastHost">
+    <div class="toast-stack" id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+    <div class="toast-stack" id="toastsAssertive" role="alert" aria-live="assertive" aria-atomic="false"></div>
+  </div>
 
   <!-- Detail drawer -->
   <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>

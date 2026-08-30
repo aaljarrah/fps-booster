@@ -1,0 +1,8 @@
+
+Systemscan wird gestartet. Dieser Vorgang kann einige Zeit dauern.
+
+Überprüfungsphase des Systemscans wird gestartet.
+Überprüfung 100 % abgeschlossen.
+
+Der Windows-Ressourcenschutz hat Integritätsverletzungen gefunden. Details sind in der CBS.Log-Datei windir\Logs\CBS\CBS.log enthalten.
+

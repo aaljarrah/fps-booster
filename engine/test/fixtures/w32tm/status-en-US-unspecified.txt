@@ -1,0 +1,9 @@
+Leap Indicator: 3(not synchronized)
+Stratum: 0 (unspecified)
+Precision: -23 (119.209ns per tick)
+Root Delay: 0.0000000s
+Root Dispersion: 0.0000000s
+ReferenceId: 0x00000000 (unspecified or unknown)
+Last Successful Sync Time: unspecified
+Source: Local CMOS Clock
+Poll Interval: 10 (1024s)

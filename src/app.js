@@ -186,7 +186,27 @@ const sentenceCase = (s) => String(s == null ? '' : s).replace(/(?!^)\b([A-Z])(?
 
 // Expanded/collapsed state for cards that re-render whenever an engine result lands.
 const openRows = { repair: new Set(), health: new Set(), img: new Set(), nvadv: new Set() };
-const state = { sys: null, tweaks: [], detect: {}, admin: false, busy: false, bench: { baseline: null, after: null, context: null }, nvidia: { catalog: null, detect: null, games: [], vrr: false, active: null, sel: new Set() } };
+const state = {
+  sys: null, tweaks: [], detect: {}, detectFailed: false, detectError: null,
+  admin: false, busy: false, env: null,
+  bench: { baseline: null, after: null, context: null },
+  nvidia: { catalog: null, detect: null, games: [], vrr: false, active: null, sel: new Set() },
+};
+
+/* ---------- engine result shape ----------
+   runPs resolves { ok:false, error, timedOut, … } for a failed engine call. An error
+   object is TRUTHY, so `if (!res) return` never caught it and the first property
+   dereference threw, blanking the whole app. Every consumer goes through these. */
+const isEngineError = (r) => !r || typeof r !== 'object' || r.ok === false;
+function engineErrorText(r) {
+  if (!r) return 'The engine returned nothing at all.';
+  if (typeof r !== 'object') return 'The engine returned a value FrameForge could not read.';
+  if (r.timedOut) return r.error || `The engine did not finish within ${Math.round((r.timeoutMs || 0) / 1000)}s and was stopped. Nothing was measured.`;
+  return r.error || r.message || 'The engine returned no result and no reason.';
+}
+// Reduced motion is a Windows accessibility setting (Visual effects > Animation effects),
+// not a preference we get to ignore.
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------- glyph helpers (Segoe Fluent Icons) ---------- */
 const GLYPH = {
@@ -201,32 +221,124 @@ Object.assign(GLYPH, {
   clock: '', bug: '', boot: '', key: '', disc: '',
   chevronRight: '', chevronDown: '', back: '', list: '', play: '', undo: '',
   blocked: '', pending: '', bullet: '',
+  // 'unknown' is the doctrine's "could not determine". It is NOT information: it is a
+  // HOLE where a measurement should be, so it gets its own mark rather than the info dot.
+  unknown: '',
 });
 function statusChip(kind, text) {
   const g = kind === 'good' ? GLYPH.check
     : kind === 'crit' ? GLYPH.dismiss
       : kind === 'admin' ? GLYPH.admin
-        : kind === 'idle' ? GLYPH.info
-          : GLYPH.warning;
-  return `<span class="status ${kind}"><span class="glyph">${g}</span>${esc(text)}</span>`;
+        : kind === 'unknown' ? GLYPH.unknown
+          : kind === 'idle' ? GLYPH.info
+            : GLYPH.warning;
+  // The glyph is a Private Use Area codepoint: decorative, and announced as junk unless
+  // it is hidden. The chip's own text carries the meaning.
+  return `<span class="status ${kind}"><span class="glyph" aria-hidden="true">${g}</span>${esc(text)}</span>`;
 }
 
 /* ---------- toasts & drawer ---------- */
-function toast(type, title, body, ms = 4200) {
+// Toasts are the app's ONLY channel for operational results ("Applied", "Repair failed",
+// "Administrator required"). They are routed to one of two live regions so a screen
+// reader is told what happened: errors and warnings assertively, everything else
+// politely. Errors also linger, because 4.2s is not enough time to reach and read one.
+function toast(type, title, body, ms) {
+  const assertive = type === 'err' || type === 'warn';
+  if (ms == null) ms = assertive ? 12000 : 4200;
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   const g = type === 'ok' ? GLYPH.check : type === 'err' ? GLYPH.error : type === 'warn' ? GLYPH.warning : GLYPH.info;
-  t.innerHTML = `<span class="glyph">${g}</span><div><div class="tt">${esc(title)}</div>${body ? `<div class="tb">${esc(body)}</div>` : ''}</div>`;
-  $('#toasts').appendChild(t);
+  t.innerHTML = `<span class="glyph" aria-hidden="true">${g}</span><div><div class="tt">${esc(title)}</div>${body ? `<div class="tb">${esc(body)}</div>` : ''}</div>`;
+  const host = (assertive ? $('#toastsAssertive') : $('#toasts')) || $('#toasts');
+  if (host) host.appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(24px)'; t.style.transition = '0.3s'; setTimeout(() => t.remove(), 320); }, ms);
 }
+
+/* The drawer is a modal pane: it needs dialog semantics, a focus move in, a focus trap,
+   Escape to close, and focus restored to whatever opened it. */
+let drawerReturnFocus = null;
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 function openDrawer(html) {
-  const d = $('#drawer'); d.innerHTML = html; d.hidden = false; $('#drawerBackdrop').hidden = false;
+  const d = $('#drawer');
+  drawerReturnFocus = document.activeElement;
+  d.innerHTML = html;
+  d.setAttribute('role', 'dialog');
+  d.setAttribute('aria-modal', 'true');
+  const h = d.querySelector('h2');
+  if (h) { h.id = h.id || 'drawerTitle'; d.setAttribute('aria-labelledby', h.id); }
+  else d.removeAttribute('aria-labelledby');
+  d.hidden = false; $('#drawerBackdrop').hidden = false;
+  const first = d.querySelector('[data-act="close-drawer"]') || d.querySelector(FOCUSABLE) || d;
+  if (first === d) d.setAttribute('tabindex', '-1');
+  try { first.focus(); } catch (e) { /* nothing focusable */ }
 }
-function closeDrawer() { $('#drawer').hidden = true; $('#drawerBackdrop').hidden = true; }
+function closeDrawer() {
+  const d = $('#drawer');
+  if (d.hidden) return;
+  d.hidden = true; $('#drawerBackdrop').hidden = true;
+  const back = drawerReturnFocus; drawerReturnFocus = null;
+  if (back && document.contains(back)) { try { back.focus(); } catch (e) {} }
+}
+const drawerOpen = () => { const d = $('#drawer'); return d && !d.hidden; };
+
+/* ---------- SettingsExpander disclosure ----------
+   The header card used to be role="button" with real buttons and checkboxes nested
+   inside it — invalid ARIA, which flattens those children into the outer button's
+   accessible name — and it never exposed aria-expanded, so a screen reader announced a
+   plain button with no hint that it discloses anything. The only open/closed cue was the
+   .chev glyph rotation, which is decorative and unlabelled.
+
+   Rather than thread the same attributes through seven separate template literals, every
+   render calls wireExpanders(): the card becomes a plain container and the chevron
+   becomes the real disclosure control, carrying aria-expanded, aria-controls and a
+   label. Called after each render because innerHTML replacement drops the attributes. */
+let sexpSeq = 0;
+function wireExpanders(root) {
+  for (const x of $$('.sexpander', root || document)) {
+    const head = x.querySelector(':scope > .sexp-head');
+    const content = x.querySelector(':scope > .sexp-content');
+    const chev = head && head.querySelector(':scope > .chev');
+    if (!head || !content) continue;
+    // The card is a container, not a button: it must not swallow its own children.
+    head.removeAttribute('role');
+    head.removeAttribute('tabindex');
+    if (!content.id) content.id = `sexpc${++sexpSeq}`;
+    if (!chev) continue;
+    chev.setAttribute('role', 'button');
+    chev.setAttribute('tabindex', '0');
+    chev.setAttribute('data-act', 'expander');
+    chev.setAttribute('aria-controls', content.id);
+    chev.setAttribute('aria-expanded', x.classList.contains('open') ? 'true' : 'false');
+    if (!chev.getAttribute('aria-label')) {
+      const title = head.querySelector('.scard-title');
+      chev.setAttribute('aria-label', title ? `Show details for ${title.textContent.trim()}` : 'Show details');
+    }
+  }
+}
 
 /* ---------- helpers ---------- */
-const isApplied = (id) => !!(state.detect[id] && state.detect[id].applied);
+/* Three states, not two. `null` means "detection did not produce a state for this
+   tweak" — turning that into `false` is what let a failed detect-all render every tweak
+   in the catalog as a detected opportunity on a perfectly tuned machine. */
+const isApplied = (id) => {
+  const d = state.detect[id];
+  if (!d) return null;
+  // engine.ps1's detect is a TRI-STATE. `applied` stays a boolean so old renderers keep
+  // working, and `determined` carries the third state: determined === false means the probe
+  // could not read this setting at all, so the boolean next to it is not an answer. Reading
+  // only `applied` turned every unreadable tweak into "not applied" — which is how a
+  // per-user tweak FrameForge could not see (wrong profile) was offered as an opportunity.
+  if (d.determined === false) return null;
+  if (d.applied === null || d.applied === undefined) return null;
+  return !!d.applied;
+};
+// engine.ps1 reports `supported` per tweak (non-Intel CPU, no NVIDIA, missing scheme…).
+// Ignoring it rendered an amber "Check" warning for a probe that could never run here.
+const isSupported = (id) => {
+  const d = state.detect[id];
+  if (!d) return null;
+  return d.supported !== false;
+};
 const tweaksByKind = (k) => state.tweaks.filter((t) => t.kind === k);
 function metaLine(t) {
   const bits = [`${esc(t.tier)} tier`, `risk: ${esc(t.risk)}`, `impact: ${esc(t.impact)}`];
@@ -246,96 +358,231 @@ function catGlyph(t) {
   return GLYPH.settings;
 }
 
+/* ---------- memory: rated speed / XMP ----------
+   sysinfo.ps1 can fail to parse a rated speed out of a DIMM part number (it understands
+   Kingston Fury and a bare 4-digit token; Corsair/G.Skill/Crucial frequently miss), and
+   soldered LPDDRx has no XMP/EXPO concept at all. "Could not determine" therefore has to
+   be its own state — rendering it as a green "XMP on" chip is exactly the fabricated
+   confident result the product sells against. */
+const LPDDR_TYPES = [30, 31, 35]; // SMBIOSMemoryType: LPDDR4, LPDDR4X, LPDDR5
+const SMBIOS_TYPE_LABEL = { 26: 'DDR4', 30: 'LPDDR4', 31: 'LPDDR4X', 34: 'DDR5', 35: 'LPDDR5' };
+function ramRatedKnown(ram) {
+  if (!ram) return false;
+  if (ram.ratedKnown !== undefined) return !!ram.ratedKnown;   // engine says so explicitly
+  return Number(ram.ratedMTs) > 0;                              // older engine: infer
+}
+// The engine may report memoryType as the raw SMBIOSMemoryType number or as a decoded
+// label ("DDR5", "LPDDR5"); accept either rather than assuming one shape.
+function ramTypeLabel(ram) {
+  if (!ram) return '';
+  if (ram.memoryTypeLabel) return String(ram.memoryTypeLabel);
+  const t = ram.memoryType;
+  if (t == null || t === '') return '';
+  if (typeof t === 'number' || /^\d+$/.test(String(t))) return SMBIOS_TYPE_LABEL[Number(t)] || '';
+  return String(t);
+}
+function ramSoldered(ram) {
+  if (!ram) return false;
+  if (LPDDR_TYPES.includes(Number(ram.memoryType))) return true;
+  if (/^LPDDR/i.test(ramTypeLabel(ram))) return true;
+  // SMBIOS FormFactor 12 = SODIMM, 8 = DIMM. Soldered memory is reported as neither on
+  // most laptops, so form factor alone is never treated as proof.
+  return false;
+}
+// true = XMP looks off, false = looks on, null = could not determine.
+function xmpState(ram) {
+  if (!ram) return null;
+  if (ramSoldered(ram)) return null;              // no XMP profile exists to be on or off
+  if (ram.xmpLikelyOff === null || ram.xmpLikelyOff === undefined) return null;
+  if (!ramRatedKnown(ram)) return null;           // "not off" was only ever a failed parse
+  return !!ram.xmpLikelyOff;
+}
+
 /* advisory satisfaction we can actually detect on this machine */
 function advisorySatisfied(t) {
-  const s = state.sys; if (!s) return null;
-  if (t.id === 'enable-xmp') return !(s.ram && s.ram.xmpLikelyOff);
+  const s = state.sys; if (isEngineError(s)) return null;
+  if (t.id === 'enable-xmp') { const x = xmpState(s.ram); return x === null ? null : !x; }
   if (t.id === 'wired-ethernet') return s.network ? s.network.isWired : null;
   if (t.id === 'move-libraries-off-qvo') { if (!s.storage || !s.storage.steamFound) return null; return s.storage.slowGameCount === 0; }
   return null; // not detectable -> recommendation only
 }
 
-/* ---------- score ---------- */
+/* ---------- score ----------
+   Returns null when nothing could be counted, so the caller renders an em-dash rather
+   than a confident "0". Anything undetectable drops out instead of scoring zero. */
 function computeScore() {
   let good = 0, total = 0;
-  for (const t of tweaksByKind('action')) { const w = IMPACT_W[t.impact] || 1; total += w; if (isApplied(t.id)) good += w; }
-  for (const t of tweaksByKind('verify')) { const w = IMPACT_W[t.impact] || 1; total += w; if (isApplied(t.id)) good += w; }
+  for (const t of [...tweaksByKind('action'), ...tweaksByKind('verify')]) {
+    if (isSupported(t.id) === false) continue;      // not applicable on this PC
+    const ap = isApplied(t.id); if (ap === null) continue;   // not measured
+    const w = IMPACT_W[t.impact] || 1; total += w; if (ap) good += w;
+  }
   for (const t of tweaksByKind('advise')) {
     const sat = advisorySatisfied(t); if (sat === null) continue;
     const w = IMPACT_W[t.impact] || 1; total += w; if (sat) good += w;
   }
-  return total ? Math.round((good / total) * 100) : 0;
+  return total ? Math.round((good / total) * 100) : null;
 }
 
 /* ---------- DASHBOARD ---------- */
+// The text a "Copy diagnostic" button puts on the clipboard. Set whenever we render a
+// failure state, so the user can hand the real reason to someone who can act on it.
+let lastDiagnostic = '';
+// The text rides on the BUTTON, not in a single module-level slot: two failure infobars can
+// be on screen at once (a policy block and a wrong-account warning are independent), and a
+// shared slot meant the first button silently copied the second one's text.
+function diagButton(text) {
+  const t = String(text || '');
+  lastDiagnostic = t;   // kept as the fallback for any button rendered without a payload
+  return `<button class="fbtn" data-act="copy-diag" data-diag="${esc(t)}">Copy diagnostic</button>`;
+}
+function infobarHtml(kind, glyph, title, msg, actions) {
+  return `<div class="infobar ${kind}"><span class="glyph" aria-hidden="true">${glyph}</span>
+    <div class="ib-body"><span class="ib-title">${esc(title)}</span><span class="ib-msg">${esc(msg)}</span></div>
+    ${actions ? `<div class="ib-actions">${actions}</div>` : ''}</div>`;
+}
+
+/* Hardware could not be read. This is a first-class outcome, not a crash: the app used
+   to throw on s.gpus[0] / s.cpu.name.replace and blank every page behind a 4-second
+   toast that never named the reason. */
+function renderEngineFailure(res) {
+  const why = engineErrorText(res);
+  const policy = state.env && state.env.psPolicy;
+  // engineUsable === false is the measured verdict "PowerShell produces nothing usable
+  // here"; it explains the failure better than the predicted policy state, so it wins.
+  const extra = policy && (policy.engineUsable === false || policy.blocked) ? ` ${policy.message}` : '';
+  const tail = /statement about your PC/i.test(why) ? '' : ' Nothing on this page is a statement about your PC — nothing was measured.';
+  $('#navRigName').textContent = 'This PC';
+  $('#navRigSub').textContent = 'Hardware could not be read';
+  $('#dashTop').innerHTML = infobarHtml('critical', GLYPH.error,
+    'Your hardware could not be read',
+    `${why}${extra}${tail}`,
+    `<button class="fbtn" data-act="retry-sys">Retry</button>${diagButton(`${why}${extra}`)}`);
+  $('#specGrid').innerHTML = `<div class="empty">No specifications were read, so none are shown. FrameForge does not guess at hardware it could not detect.</div>`;
+  $('#oppList').innerHTML = `<div class="empty">Optimization state is unknown while hardware detection is failing.</div>`;
+}
+
 function renderDashboard() {
-  const s = state.sys; if (!s) return;
+  const s = state.sys;
+  // Guard the SHAPE, not just null: a failed engine call resolves to a truthy error object.
+  if (isEngineError(s) || !s.cpu || !Array.isArray(s.gpus) || !s.ram || !s.display) {
+    renderEngineFailure(s);
+    return;
+  }
   const gpu = s.gpus[0] || {};
+  const cpu = s.cpu || {};
+  const ram = s.ram || {};
+  const disp = s.display || {};
+  const os = s.os || {};
+  const disks = Array.isArray(s.disks) ? s.disks : [];
+  const modules = Array.isArray(ram.modules) ? ram.modules : [];
+  const cpuName = cpu.name || 'Processor could not be read';
+  const clean = (n) => String(n).replace(/\(R\)|\(TM\)/g, '');
   // nav pane "profile" = this rig
   $('#navRigName').textContent = (gpu.name || 'This PC').replace('NVIDIA GeForce ', 'GeForce ');
-  $('#navRigSub').textContent = `${s.cpu.name.replace(/\(R\)|\(TM\)|Intel |CPU /g, '').trim()}`;
+  $('#navRigSub').textContent = cpuName.replace(/\(R\)|\(TM\)|Intel |CPU /g, '').trim();
   $('#greeting').textContent = 'Home';
 
   const score = computeScore();
-  const actions = [...tweaksByKind('action'), ...tweaksByKind('verify')];
-  const inPlace = actions.filter((t) => isApplied(t.id)).length;
+  const actions = [...tweaksByKind('action'), ...tweaksByKind('verify')].filter((t) => isSupported(t.id) !== false);
+  const inPlace = actions.filter((t) => isApplied(t.id) === true).length;
+  const counted = actions.filter((t) => isApplied(t.id) !== null).length;
+  const scoreText = score === null ? '&ndash;' : String(score);
+  const scoreDesc = state.detectFailed
+    ? 'Optimization state could not be read on this PC, so nothing is scored.'
+    : `${inPlace} of ${counted} optimizations in place, counted only from checks we can verify on this PC${counted < actions.length ? ` (${actions.length - counted} could not be checked and are not counted)` : ''}`;
+  const specLine = [
+    os.caption ? esc(os.caption) : 'Windows edition unknown',
+    os.build ? `build ${esc(os.build)}` : null,
+    (cpu.cores != null && cpu.threads != null) ? `${cpu.cores} cores / ${cpu.threads} threads` : null,
+    ram.runningMTs ? `${esc(ram.runningMTs)} MT/s` : null,
+    disks.length ? `${disks.length} drives` : null,
+  ].filter(Boolean).join(' · ');
+
   $('#dashTop').innerHTML = `
     <div class="scard">
-      <span class="scard-icon">${GLYPH.pc}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.pc}</span>
       <div class="scard-body">
         <div class="scard-title">${esc(gpu.name || 'This PC')}</div>
-        <div class="scard-desc">${esc(s.os.caption)} · build ${esc(s.os.build)} · ${s.cpu.cores} cores / ${s.cpu.threads} threads · ${esc(s.ram.runningMTs)} MT/s · ${s.disks.length} drives</div>
+        <div class="scard-desc">${specLine}</div>
       </div>
     </div>
-    <div class="scard block">
+    ${state.detectFailed ? '' : `<div class="scard block">
       <div style="display:flex;align-items:center;gap:16px">
-        <span class="scard-icon">${GLYPH.speed}</span>
+        <span class="scard-icon" aria-hidden="true">${GLYPH.speed}</span>
         <div class="scard-body">
           <div class="scard-title">Optimization score</div>
-          <div class="scard-desc">${inPlace} of ${actions.length} optimizations in place, counted only from checks we can verify on this PC</div>
+          <div class="scard-desc">${scoreDesc}</div>
         </div>
-        <span style="font-family:var(--font-display);font-size:20px;line-height:28px;font-weight:600">${score}</span>
+        <span style="font-family:var(--font-display);font-size:20px;line-height:28px;font-weight:600">${scoreText}</span>
       </div>
       <div class="fprogress" style="margin-top:12px"><i id="scoreBar" style="width:0%"></i></div>
-    </div>`;
-  setTimeout(() => { const b = $('#scoreBar'); if (b) b.style.width = score + '%'; }, 60);
+    </div>`}`;
+  if (score !== null && !state.detectFailed) {
+    setTimeout(() => { const b = $('#scoreBar'); if (b) b.style.width = score + '%'; }, 60);
+  }
 
-  // spec cards
-  const ramChip = s.ram.xmpLikelyOff
-    ? statusChip('warn', `XMP off — rated ${s.ram.ratedMTs}`)
-    : statusChip('good', 'XMP on');
-  const mcChip = s.cpu.microcodeOk === true ? statusChip('good', `Microcode ${s.cpu.microcode}`)
-    : s.cpu.microcodeOk === false ? statusChip('warn', 'Update BIOS microcode') : '';
-  const dispChip = s.display.refreshOpportunity
-    ? statusChip('warn', `${s.display.maxHzAtCurrentRes} Hz available`)
-    : statusChip('good', 'Optimal');
+  // spec cards. Every chip below is a measured claim or an explicit "unknown".
+  const xmp = xmpState(ram);
+  const ramChip = ramSoldered(ram)
+    ? statusChip('idle', 'Soldered memory — no XMP profile')
+    : !ramRatedKnown(ram)
+      ? statusChip('idle', 'Rated speed unknown')
+      : xmp === true ? statusChip('warn', `XMP off — rated ${esc(ram.ratedMTs)}`)
+        : xmp === false ? statusChip('good', 'XMP on')
+          : statusChip('idle', 'XMP state unknown');
+  const mcChip = cpu.microcodeOk === true ? statusChip('good', `Microcode ${esc(cpu.microcode)}`)
+    : cpu.microcodeOk === false ? statusChip('warn', 'Update BIOS microcode') : '';
+  const dispChip = disp.refreshOpportunity === true ? statusChip('warn', `${esc(disp.maxHzAtCurrentRes)} Hz available`)
+    : disp.refreshOpportunity === false ? statusChip('good', 'Optimal')
+      : statusChip('idle', 'Refresh rate unknown');
+  const totalGB = modules.reduce((a, m) => a + (Number(m && m.capacityGB) || 0), 0);
+  const memKind = ramTypeLabel(ram);
   const cards = [
-    { g: GLYPH.chip, k: 'Processor', d: `${esc(s.cpu.name.replace(/\(R\)|\(TM\)/g, ''))} · ${s.cpu.cores} cores / ${s.cpu.threads} threads${s.cpu.hybrid ? ' · hybrid P+E' : ''}`, chip: mcChip },
-    { g: GLYPH.monitor, k: 'Graphics', d: `${esc(gpu.name || '—')} · driver ${esc(gpu.driverVersion || '—')}`, chip: '' },
-    { g: GLYPH.memory, k: 'Memory', d: `${s.ram.modules.reduce((a, m) => a + m.capacityGB, 0)} GB DDR5 · ${s.ram.runningMTs} MT/s${s.ram.ratedMTs ? ` of ${s.ram.ratedMTs} rated` : ''}`, chip: ramChip },
-    { g: GLYPH.monitor, k: 'Display', d: `${s.display.currentW}×${s.display.currentH} · ${s.display.currentHz} Hz${s.display.refreshOpportunity ? '' : ' · max'}`, chip: dispChip },
+    { g: GLYPH.chip, k: 'Processor', d: `${esc(clean(cpuName))}${(cpu.cores != null) ? ` · ${cpu.cores} cores / ${cpu.threads} threads` : ''}${cpu.hybrid ? ' · hybrid P+E' : ''}`, chip: mcChip },
+    { g: GLYPH.monitor, k: 'Graphics', d: `${esc(gpu.name || 'Could not be read')} · driver ${esc(gpu.driverVersion || 'unknown')}`, chip: '' },
+    { g: GLYPH.memory, k: 'Memory', d: `${totalGB ? `${totalGB} GB` : 'Capacity unknown'}${memKind ? ` ${esc(memKind)}` : ''}${ram.runningMTs ? ` · ${ram.runningMTs} MT/s` : ''}${ramRatedKnown(ram) ? ` of ${esc(ram.ratedMTs)} rated` : ' · rated speed could not be read'}`, chip: ramChip },
+    { g: GLYPH.monitor, k: 'Display', d: `${disp.currentW && disp.currentH ? `${disp.currentW}×${disp.currentH}` : 'Resolution unknown'}${disp.currentHz ? ` · ${disp.currentHz} Hz` : ''}${disp.refreshOpportunity === false ? ' · max' : ''}`, chip: dispChip },
   ];
   $('#specGrid').innerHTML = cards.map((c) => `
     <div class="scard">
-      <span class="scard-icon">${c.g}</span>
+      <span class="scard-icon" aria-hidden="true">${c.g}</span>
       <div class="scard-body"><div class="scard-title">${esc(c.k)}</div><div class="scard-desc">${c.d}</div></div>
       <div class="scard-control">${c.chip || ''}</div>
     </div>`).join('');
 
+  // Detection failed wholesale → say so. Listing every tweak in the catalog as a
+  // "detected opportunity" would be inventing ~20 problems on a machine we never read.
+  if (state.detectFailed) {
+    $('#oppList').innerHTML = infobarHtml('critical', GLYPH.error,
+      'Optimization state could not be read',
+      `${state.detectError || 'The detection engine returned no result.'} Nothing is listed here because nothing was checked — this is not a statement that your PC is untuned.`,
+      `<button class="fbtn" data-act="retry-detect">Retry</button>${diagButton(state.detectError || '')}`);
+    return;
+  }
+
   // opportunities = unapplied actions + outstanding detectable advisories + unhealthy verifies
   const opps = [];
-  for (const t of tweaksByKind('action')) if (!isApplied(t.id)) opps.push(t);
-  for (const t of tweaksByKind('verify')) if (!isApplied(t.id)) opps.push(t);
+  for (const t of [...tweaksByKind('action'), ...tweaksByKind('verify')]) {
+    if (isSupported(t.id) !== true) continue;   // false = N/A here, null = never measured
+    if (isApplied(t.id) === false) opps.push(t);
+  }
   for (const t of tweaksByKind('advise')) { const sat = advisorySatisfied(t); if (sat === false) opps.push(t); }
   opps.sort((a, b) => (IMPACT_W[b.impact] || 1) - (IMPACT_W[a.impact] || 1));
 
-  if (!opps.length) { $('#oppList').innerHTML = `<div class="empty">No outstanding opportunities. This PC is already tuned.</div>`; }
-  else {
-    $('#oppList').innerHTML = opps.map((t) => {
+  const unchecked = [...tweaksByKind('action'), ...tweaksByKind('verify')].filter((t) => isSupported(t.id) !== false && isApplied(t.id) === null).length;
+  const uncheckedNote = unchecked
+    ? infobarHtml('caution', GLYPH.warning, 'Some checks could not run',
+      `${unchecked} tweak${unchecked === 1 ? '' : 's'} could not be checked on this PC. ${unchecked === 1 ? 'It is' : 'They are'} not listed as an opportunity and not reported as healthy.`, '')
+    : '';
+  if (!opps.length) {
+    $('#oppList').innerHTML = uncheckedNote + `<div class="empty">No outstanding opportunities. Every check that could run reports this PC is already tuned.</div>`;
+  } else {
+    $('#oppList').innerHTML = uncheckedNote + opps.map((t) => {
       const actLabel = t.kind === 'advise' ? 'How' : (t.requiresAdmin && !state.admin ? 'Needs admin' : 'Apply');
       const accent = t.kind !== 'advise' && !(t.requiresAdmin && !state.admin);
       return `<div class="scard" data-id="${t.id}">
-        <span class="scard-icon">${catGlyph(t)}</span>
+        <span class="scard-icon" aria-hidden="true">${catGlyph(t)}</span>
         <div class="scard-body">
           <div class="scard-title">${esc(t.name)}</div>
           <div class="scard-desc">${esc(t.summary)}</div>
@@ -360,21 +607,30 @@ function profileTweaks(p) { return state.tweaks.filter((t) => p.kinds.includes(t
 function renderBoost() {
   $('#profileGrid').innerHTML = PROFILES.map((p) => {
     const items = profileTweaks(p);
-    const appliedN = items.filter((t) => isApplied(t.id)).length;
-    const rows = items.map((t) => `
+    const appliedN = items.filter((t) => isApplied(t.id) === true).length;
+    const knownN = items.filter((t) => isApplied(t.id) !== null).length;
+    const rows = items.map((t) => {
+      const ap = isApplied(t.id);
+      // "Off" is a measured claim. An unread tweak says so instead of borrowing it.
+      const chip = isSupported(t.id) === false ? statusChip('idle', 'Not applicable on this PC')
+        : ap === true ? statusChip('good', 'On')
+          : ap === false ? '<span class="list-caption">Off</span>'
+            : statusChip('idle', 'Could not check');
+      return `
       <div class="sexp-row">
         <div class="scard-body"><div class="scard-title">${esc(t.name)}</div><div class="scard-desc">${esc(t.summary)}</div></div>
-        ${isApplied(t.id) ? statusChip('good', 'On') : '<span class="list-caption">Off</span>'}
-      </div>`).join('') || '<div class="sexp-row"><div class="scard-desc">No items</div></div>';
+        ${chip}
+      </div>`;
+    }).join('') || '<div class="sexp-row"><div class="scard-desc">No items</div></div>';
     return `<div class="sexpander" id="profile-${p.id}">
-      <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
-        <span class="scard-icon">${p.glyph}</span>
+      <div class="scard sexp-head" data-act="expander">
+        <span class="scard-icon" aria-hidden="true">${p.glyph}</span>
         <div class="scard-body">
           <div class="scard-title">${esc(p.name)}${p.feature ? ' <span class="tag-recommended">· Recommended</span>' : ''}</div>
           <div class="scard-desc">${esc(p.desc)}</div>
         </div>
         <div class="scard-control">
-          <span class="scard-value">${appliedN} of ${items.length} on</span>
+          <span class="scard-value">${appliedN} of ${knownN} on${knownN < items.length ? ` · ${items.length - knownN} unchecked` : ''}</span>
           <button class="fbtn ${p.feature ? 'accent' : ''}" data-act="apply-profile" data-id="${p.id}">${appliedN === items.length && items.length ? 'Reapply' : 'Apply'}</button>
         </div>
         <span class="chev"></span>
@@ -383,13 +639,14 @@ function renderBoost() {
     </div>`;
   }).join('') + `
     <div class="scard">
-      <span class="scard-icon">${GLYPH.history}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.history}</span>
       <div class="scard-body">
         <div class="scard-title">Revert everything</div>
         <div class="scard-desc">Replays the backup journal in reverse, restoring every setting to its exact previous value.</div>
       </div>
       <div class="scard-control"><button class="fbtn" data-act="revert-all">Revert all tweaks</button></div>
     </div>`;
+  wireExpanders($('#profileGrid'));
 }
 
 /* ---------- TWEAKS ---------- */
@@ -416,25 +673,45 @@ function renderTweaks() {
     html += `<div class="card-list">${items.map((t) => renderTweakRow(t)).join('')}</div>`;
   }
   $('#tweakList').innerHTML = html || `<div class="empty">No tweaks in this category.</div>`;
+  wireExpanders($('#tweakList'));
 }
 function renderTweakRow(t) {
   const applied = isApplied(t.id);
+  const supported = isSupported(t.id);
   let control = '';
-  if (t.kind === 'action') {
-    const disabled = t.requiresAdmin && !state.admin ? 'disabled' : '';
-    control = `<label class="fswitch" title="${disabled ? 'Requires administrator' : ''}">
-      <input type="checkbox" ${applied ? 'checked' : ''} ${disabled} data-act="toggle" data-id="${t.id}">
+  if (supported === false) {
+    // engine.ps1 said this op does not apply here (wrong CPU vendor, no NVIDIA, missing
+    // scheme or service). Not a warning, not an opportunity — just not applicable.
+    control = statusChip('idle', 'Not applicable on this PC');
+    if (t.kind === 'action') {
+      control += `<label class="fswitch" title="Not applicable on this PC">
+        <input type="checkbox" disabled data-act="toggle" data-id="${t.id}">
+        <span class="switch-state"></span><span class="switch-track"><span class="switch-knob"></span></span>
+      </label>`;
+    }
+  } else if (t.kind === 'action') {
+    const needAdmin = t.requiresAdmin && !state.admin;
+    const unknown = applied === null;
+    const disabled = (needAdmin || unknown) ? 'disabled' : '';
+    const why = needAdmin ? 'Requires administrator' : unknown ? 'This tweak’s current state could not be read, so it cannot be toggled safely' : '';
+    // 'unknown', not 'idle': "could not check" is a hole in the measurement, and the idle
+    // chip renders it in the same quiet grey as a neutral, nothing-to-see-here note.
+    control = `${unknown ? statusChip('unknown', 'Could not check') : ''}<label class="fswitch" title="${esc(why)}">
+      <input type="checkbox" ${applied === true ? 'checked' : ''} ${disabled} data-act="toggle" data-id="${t.id}">
       <span class="switch-state"></span><span class="switch-track"><span class="switch-knob"></span></span>
     </label>`;
   } else if (t.kind === 'verify') {
-    control = applied ? statusChip('good', 'Healthy') : statusChip('warn', 'Check');
+    control = applied === true ? statusChip('good', 'Healthy')
+      : applied === false ? statusChip('warn', 'Check')
+        : statusChip('unknown', 'Could not check');
   } else {
     const sat = advisorySatisfied(t);
     control = sat === true ? statusChip('good', 'Done') : `<button class="fbtn" data-act="guide" data-id="${t.id}">Show me</button>`;
   }
+  const opText = describeOp(t);
   return `<div class="sexpander" data-id="${t.id}">
-    <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
-      <span class="scard-icon">${catGlyph(t)}</span>
+    <div class="scard sexp-head" data-act="expander">
+      <span class="scard-icon" aria-hidden="true">${catGlyph(t)}</span>
       <div class="scard-body">
         <div class="scard-title">${esc(t.name)}</div>
         <div class="scard-desc">${esc(t.summary)}</div>
@@ -447,7 +724,9 @@ function renderTweakRow(t) {
         <p class="meta-caption" style="margin:0 0 6px">${metaLine(t)}</p>
         <p>${esc(t.details)}</p>
         <p><b style="color:var(--text-primary)">Why it helps:</b> ${esc(t.evidence)}</p>
-        <div class="mono">${esc(describeOp(t))}</div>
+        ${opText
+      ? `<div class="mono">${esc(opText)}</div>`
+      : '<p><i>This tweak’s operation could not be described from the catalog, so nothing is shown here rather than an empty box that pretends to be documentation.</i></p>'}
         <div class="src-list" style="margin-top:8px;display:flex;flex-direction:column;gap:2px">
           ${(t.sources || []).map((u) => `<a data-act="src" data-url="${esc(u)}">${esc(u)}</a>`).join('')}
         </div>
@@ -465,19 +744,40 @@ function describeOp(t) {
     else if (o.type === 'multi') o.ops.forEach(walk);
     else if (o.type === 'powercfg-scheme') lines.push(`powercfg → activate "${o.name}"${op.procMinState != null ? `, min processor state = ${op.procMinState}%` : ''}`);
     else if (o.type === 'service') lines.push(`service ${o.name} → ${o.startup}/${o.state}`);
+    // An op type this function does not know about is shown verbatim rather than
+    // silently producing an empty block that presents itself as the documentation
+    // (doctrine rule 5: the catalog documents exactly what will run).
+    else lines.push(JSON.stringify(o));
   };
   walk(op);
   return lines.join('\n');
 }
 
 /* ---------- BENCHMARK ---------- */
+/* PowerShell 5.1's `@(...) | ConvertTo-Json` unrolls a single-element array, so ONE
+   qualifying process serialises as a bare object rather than a one-item list — and one
+   qualifying process is the normal case when you have launched exactly one game to
+   measure. `Array.isArray(res) ? res : []` turned that shape mismatch into a confident
+   "nothing found". This normalises the single-object form and returns null (not an empty
+   list) for anything that is actually an error, so the caller can say so. */
+function procList(res) {
+  if (Array.isArray(res)) return res;
+  if (res && typeof res === 'object' && res.ok !== false && (res.name || res.ids)) return [res];
+  return null;
+}
 async function refreshBenchTargets() {
   const sel = $('#benchTarget');
   sel.innerHTML = `<option value="">Loading…</option>`;
   const res = await window.ff.windowedProcs();
-  const list = Array.isArray(res) ? res : [];
+  const list = procList(res);
+  if (!list) {
+    sel.innerHTML = `<option value="">Could not read running processes</option>`;
+    const st = $('#benchStatus');
+    if (st) st.textContent = `Running processes could not be read: ${engineErrorText(res)}`;
+    return;
+  }
   sel.innerHTML = `<option value="">Select a running game or app…</option>` +
-    list.map((p) => `<option value="${p.name}.exe">${esc(p.title.slice(0, 42))} — ${esc(p.name)} (${p.ramMB} MB)</option>`).join('');
+    list.map((p) => `<option value="${esc(p.name)}.exe">${esc(String(p.title || p.name || '').slice(0, 42))} — ${esc(p.name)} (${esc(p.ramMB)} MB)</option>`).join('');
 }
 // Each metric is its own SettingsCard: what it means on the left, the reading on the
 // right. The legend that used to live in a separate expander is now the description,
@@ -501,7 +801,7 @@ function metricCard(m, b, a) {
     if (Math.abs(d) > 0.05) delta = `<span class="delta ${up ? 'up' : 'down'}">${d > 0 ? '+' : ''}${pct}%</span>`;
   }
   return `<div class="scard">
-    <span class="scard-icon">${GLYPH.speed}</span>
+    <span class="scard-icon" aria-hidden="true">${GLYPH.speed}</span>
     <div class="scard-body">
       <div class="scard-title">${m.label}</div>
       <div class="scard-desc">${m.desc}</div>
@@ -511,7 +811,7 @@ function metricCard(m, b, a) {
 }
 function runCard(title, m, desc) {
   return `<div class="scard">
-    <span class="scard-icon">${GLYPH.history}</span>
+    <span class="scard-icon" aria-hidden="true">${GLYPH.history}</span>
     <div class="scard-body">
       <div class="scard-title">${title}</div>
       <div class="scard-desc">${desc}</div>
@@ -528,15 +828,15 @@ function benchVerdict(b, a) {
   const real = Math.abs(dAvg) >= NOISE || Math.abs(dLow) >= NOISE;
   const fmt = (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
   if (!real) {
-    return `<div class="infobar" style="margin-top:8px"><span class="glyph">${GLYPH.info}</span><div class="ib-body"><span class="ib-title">Within margin of error on this PC</span><span class="ib-msg">No measurable change (average ${fmt(dAvg)}, 1% low ${fmt(dLow)}). Anything under ${NOISE}% is run-to-run variance. That is a result, not a failure.</span></div></div>`;
+    return `<div class="infobar" style="margin-top:8px"><span class="glyph" aria-hidden="true">${GLYPH.info}</span><div class="ib-body"><span class="ib-title">Within margin of error on this PC</span><span class="ib-msg">No measurable change (average ${fmt(dAvg)}, 1% low ${fmt(dLow)}). Anything under ${NOISE}% is run-to-run variance. That is a result, not a failure.</span></div></div>`;
   }
   const better = dLow > 0 || dAvg > 0;
-  return `<div class="infobar ${better ? 'success' : 'critical'}" style="margin-top:8px"><span class="glyph">${better ? GLYPH.check : GLYPH.warning}</span><div class="ib-body"><span class="ib-title">${better ? 'Measurable change' : 'Measurable regression'}</span><span class="ib-msg">Average ${fmt(dAvg)}, 1% low ${fmt(dLow)}.</span></div></div>`;
+  return `<div class="infobar ${better ? 'success' : 'critical'}" style="margin-top:8px"><span class="glyph" aria-hidden="true">${better ? GLYPH.check : GLYPH.warning}</span><div class="ib-body"><span class="ib-title">${better ? 'Measurable change' : 'Measurable regression'}</span><span class="ib-msg">Average ${fmt(dAvg)}, 1% low ${fmt(dLow)}.</span></div></div>`;
 }
 function renderBench() {
   const b = state.bench.baseline, a = state.bench.after;
   const ctx = state.bench.context
-    ? `<div class="infobar" style="margin-bottom:8px"><span class="glyph">${GLYPH.info}</span><div class="ib-body"><span class="ib-title">Measuring: ${esc(state.bench.context)}</span><span class="ib-msg">Record baseline, change the setting (NVIDIA settings need a game relaunch), then record after.</span></div></div>`
+    ? `<div class="infobar" style="margin-bottom:8px"><span class="glyph" aria-hidden="true">${GLYPH.info}</span><div class="ib-body"><span class="ib-title">Measuring: ${esc(state.bench.context)}</span><span class="ib-msg">Record baseline, change the setting (NVIDIA settings need a game relaunch), then record after.</span></div></div>`
     : '';
   const runs = `<div class="card-list">
     ${runCard('Baseline', b, 'The reading taken before you changed anything')}
@@ -550,19 +850,29 @@ function renderBench() {
 let focusSel = new Set();
 async function renderFocus() {
   const res = await window.ff.bloatProcs();
-  const list = Array.isArray(res) ? res : [];
-  const total = list.reduce((s, p) => s + p.ramMB, 0);
+  const list = procList(res);
+  if (!list) {
+    // Never the "nothing found" copy for a read that failed.
+    $('#reclaimMB').textContent = '–';
+    $('#focusList').innerHTML = infobarHtml('critical', GLYPH.error, 'Could not read running processes',
+      `${engineErrorText(res)} No claim is being made about what is running on this PC.`,
+      `<button class="fbtn" data-act="focus-rescan">Rescan</button>${diagButton(engineErrorText(res))}`);
+    $('#focusClose').disabled = true;
+    return;
+  }
+  const total = list.reduce((s, p) => s + (Number(p.ramMB) || 0), 0);
   $('#reclaimMB').textContent = `${(total / 1024).toFixed(1)} GB`;
   if (!list.length) { $('#focusList').innerHTML = `<div class="empty">No background apps worth closing.</div>`; $('#focusClose').disabled = true; return; }
   $('#focusList').innerHTML = list.map((p) => {
-    const ids = p.ids.join(',');
-    return `<label class="scard clickable" data-ids="${ids}">
-      <input type="checkbox" class="fcheck" ${focusSel.has(ids) ? 'checked' : ''} data-act="focus-sel" data-ids="${ids}">
+    const idArr = Array.isArray(p.ids) ? p.ids : (p.ids != null ? [p.ids] : []);
+    const ids = idArr.join(',');
+    return `<label class="scard clickable" data-ids="${esc(ids)}">
+      <input type="checkbox" class="fcheck" ${focusSel.has(ids) ? 'checked' : ''} data-act="focus-sel" data-ids="${esc(ids)}">
       <div class="scard-body">
         <div class="scard-title">${esc(p.name)}</div>
-        <div class="scard-desc">${p.ids.length} process${p.ids.length > 1 ? 'es' : ''}</div>
+        <div class="scard-desc">${idArr.length} process${idArr.length > 1 ? 'es' : ''}</div>
       </div>
-      <span class="scard-value">${p.ramMB} MB</span>
+      <span class="scard-value">${esc(p.ramMB)} MB</span>
     </label>`;
   }).join('');
   $('#focusClose').disabled = focusSel.size === 0;
@@ -584,7 +894,40 @@ function updateAdminUI() {
 }
 
 /* ---------- actions ---------- */
-async function refreshDetect() { state.detect = {}; const arr = await window.ff.detectAll(); if (Array.isArray(arr)) for (const d of arr) state.detect[d.id] = d; }
+/* Detection has three outcomes, and "did not run" is one of them. Leaving state.detect
+   empty made isApplied() answer false for everything, which rendered a score of 0 and a
+   fabricated list of ~20 "detected opportunities" on a machine nothing was read from. */
+async function refreshDetect() {
+  state.detect = {};
+  let arr;
+  try { arr = await window.ff.detectAll(); }
+  catch (e) { arr = { ok: false, error: String((e && e.message) || e) }; }
+  if (Array.isArray(arr)) {
+    state.detectFailed = false; state.detectError = null;
+    for (const d of arr) if (d && d.id) state.detect[d.id] = d;
+    return;
+  }
+  state.detectFailed = true;
+  state.detectError = engineErrorText(arr);
+}
+
+/* Elevation. relaunchElevated() now resolves only once the elevated instance actually
+   started; a declined UAC prompt (or a policy-blocked RunAs) leaves FrameForge running
+   and says so, instead of the window silently vanishing 400 ms after the click. */
+async function requestElevation() {
+  let r;
+  try { r = await window.ff.relaunchElevated(); }
+  catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+  if (r && r.ok) return true;   // this instance is about to quit
+  if (r && r.cancelled) {
+    toast('warn', 'Elevation was cancelled',
+      'FrameForge is still running without administrator rights. Admin-only checks report “needs administrator” rather than a result.');
+  } else {
+    toast('err', 'Could not restart as administrator',
+      `${(r && r.error) || 'The elevated instance did not start.'} FrameForge is still running without administrator rights.`);
+  }
+  return false;
+}
 
 async function applyTweak(id) {
   const t = state.tweaks.find((x) => x.id === id); if (!t) return;
@@ -608,16 +951,32 @@ async function applyProfile(pid) {
   const needAdmin = items.some((t) => t.requiresAdmin) && !state.admin;
   if (needAdmin) { toast('warn', 'Some items need admin', 'Restart as administrator to apply the full profile. Applying the rest now.'); }
   let ok = 0, skip = 0;
+  // A skipped item used to vanish into a bare count. When the reason is "FrameForge is
+  // running as the wrong Windows account" the user cannot act without being told, so the
+  // first real refusal reason travels with the summary.
+  const reasons = [];
   for (const t of items) {
-    if (t.requiresAdmin && !state.admin) { skip++; continue; }
-    const r = await window.ff.apply(t.id); if (r && r.success) ok++; else skip++;
+    if (t.requiresAdmin && !state.admin) { skip++; reasons.push(`${t.name}: needs administrator.`); continue; }
+    const r = await window.ff.apply(t.id);
+    if (r && r.success) { ok++; }
+    else { skip++; reasons.push(`${t.name}: ${(r && (r.message || r.error)) || 'no reason given.'}`); }
   }
-  toast(ok ? 'ok' : 'warn', `${p.name} applied`, `${ok} applied${skip ? `, ${skip} skipped` : ''}.`);
+  const tail = skip ? ` ${reasons[0]}${reasons.length > 1 ? ` (+${reasons.length - 1} more)` : ''}` : '';
+  toast(skip ? 'warn' : 'ok', `${p.name} applied`, `${ok} applied${skip ? `, ${skip} skipped.` : '.'}${tail}`, skip ? 16000 : undefined);
   await refreshDetect(); rerenderAll();
 }
 async function revertAll() {
   const r = await window.ff.revertAll();
-  toast('ok', 'Reverted everything', r && r.count != null ? `${r.count} change(s) undone.` : 'Done.');
+  // This used to toast "Reverted everything" unconditionally. When FrameForge is running as
+  // another Windows account the ledger it can read is that account's — usually empty — so the
+  // cheerful message was a claim about a profile it never touched. The engine now says
+  // success=false with a reason; the UI must not paper over it (doctrine rule 2 and 3).
+  if (!r || r.success !== true) {
+    toast('err', 'Not everything was undone',
+      (r && (r.message || r.error)) || 'FrameForge could not confirm that anything was reverted.', 16000);
+  } else {
+    toast('ok', 'Reverted everything', r.count != null ? `${r.count} change(s) undone.` : 'Done.');
+  }
   await refreshDetect(); rerenderAll();
 }
 function showGuide(id) {
@@ -650,18 +1009,33 @@ async function runCapture(which) {
   $('#benchBaseline').disabled = false;
   if (r && r.ok) {
     state.bench[which] = r; st.textContent = `${which === 'baseline' ? 'Baseline' : 'After'} recorded: ${r.avgFps} FPS average, ${r.low1Fps} 1% low`;
-    if (which === 'baseline') $('#benchAfter').disabled = false;
     renderBench();
   } else {
     st.textContent = BENCH_IDLE_TEXT;
     toast('err', 'Capture failed', (r && (r.reason || r.error)) || 'Make sure the game is running and rendering.');
   }
+  // Derive "After" from whether a baseline exists, in BOTH paths. It used to be
+  // re-enabled only inside the baseline-success branch, so a second "after" run — or a
+  // retry after a failed one — was impossible without re-recording the baseline.
+  $('#benchAfter').disabled = !state.bench.baseline;
 }
 
-/* ---------- rerender ---------- */
+/* ---------- rerender ----------
+   Each section renders in its own try/catch: a throw inside renderDashboard used to
+   prevent renderBoost and renderTweaks from ever running, so one bad field blanked the
+   entire application rather than one card. */
+function safely(what, fn) {
+  try { fn(); }
+  catch (e) {
+    console.error(`[FrameForge] ${what} failed to render`, e);
+    toast('err', `${what} could not be drawn`, String((e && e.message) || e));
+  }
+}
 function rerenderAll() {
-  renderDashboard(); renderBoost(); renderTweaks();
-  const n = tweaksByKind('action').filter((t) => isApplied(t.id)).length;
+  safely('Home', renderDashboard);
+  safely('One-click boost', renderBoost);
+  safely('Tweaks', renderTweaks);
+  const n = tweaksByKind('action').filter((t) => isApplied(t.id) === true).length;
   $('#tweaksAppliedBadge').textContent = n ? String(n) : '';
 }
 
@@ -673,11 +1047,24 @@ const PAGE_TITLES = {
   nvidia: 'NVIDIA', 'nvidia-advanced': 'Every NVIDIA setting', benchmark: 'Benchmark',
   health: 'Windows health', repair: 'Repair', safety: 'Safety and recovery',
 };
-function switchView(v) {
+// moveFocus is false when the view changes as a side effect of typing in the search box —
+// stealing focus mid-keystroke would be worse than the announcement is worth.
+function switchView(v, moveFocus = true) {
   const nav = NAV_FOR[v] || v;
-  $$('.nav-item[data-view]').forEach((n) => n.classList.toggle('active', n.dataset.view === nav));
+  $$('.nav-item[data-view]').forEach((n) => {
+    const on = n.dataset.view === nav;
+    n.classList.toggle('active', on);
+    // A CSS-only .active class tells a screen-reader user nothing about which page is
+    // selected. aria-current does.
+    if (on) n.setAttribute('aria-current', 'page'); else n.removeAttribute('aria-current');
+  });
   $$('.view').forEach((s) => s.classList.toggle('active', s.id === 'view-' + v));
   $('#content').scrollTop = 0;
+  // Move focus to the new page's heading so the page name is announced; without this,
+  // focus stays on the nav button and nothing says the content region was replaced.
+  const active = $('#view-' + v);
+  const h1 = active && active.querySelector('.page-title');
+  if (h1 && moveFocus) { h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch (e) { h1.focus(); } }
   if (v === 'benchmark') { refreshBenchTargets(); renderBench(); }
   if (v === 'focus') renderFocus();
   if (v === 'nvidia' || v === 'nvidia-advanced') loadNvidia();
@@ -698,6 +1085,8 @@ document.addEventListener('click', async (e) => {
       if (e.target.closest('.fswitch, .fbtn, .fcheck, a, .linkbtn, select, .status, .ftext')) break;
       const x = t.closest('.sexpander'); if (!x) break;
       x.classList.toggle('open');
+      const chev = x.querySelector(':scope > .sexp-head > .chev');
+      if (chev) chev.setAttribute('aria-expanded', x.classList.contains('open') ? 'true' : 'false');
       // Health, repair and fresh-image cards re-render on every engine result, so the
       // open/closed state lives in state rather than in the DOM.
       for (const k of ['repair', 'health', 'img', 'nvadv']) {
@@ -709,7 +1098,20 @@ document.addEventListener('click', async (e) => {
       if (x.classList.contains('open') && x.dataset.repair) ensureRepairPreflight(x.dataset.repair);
       break;
     }
-    case 'opp': { const tw = state.tweaks.find((x) => x.id === id); if (tw.kind === 'advise') showGuide(id); else applyTweak(id); break; }
+    // Guard like every sibling handler: a card whose id is no longer in state.tweaks
+    // (catalog reload racing a pending render) used to throw inside the delegated
+    // handler and silently abort the rest of its work.
+    case 'opp': { const tw = state.tweaks.find((x) => x.id === id); if (!tw) break; if (tw.kind === 'advise') showGuide(id); else applyTweak(id); break; }
+    case 'copy-diag': {
+      const text = (t.dataset.diag != null && t.dataset.diag !== '') ? t.dataset.diag : (lastDiagnostic || '');
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject(new Error('no clipboard')))
+        .then(() => toast('ok', 'Diagnostic copied', 'The engine’s exact error text is on your clipboard.'))
+        .catch(() => toast('warn', 'Could not copy', text.slice(0, 300)));
+      break;
+    }
+    case 'retry-sys': retrySysInfo(); break;
+    case 'retry-detect': retryDetect(); break;
+    case 'focus-rescan': { focusSel.clear(); renderFocus(); break; }
     case 'toggle': break; // handled by change
     case 'src': window.ff.openExternal(t.dataset.url); break;
     case 'guide': showGuide(id); break;
@@ -722,15 +1124,16 @@ document.addEventListener('click', async (e) => {
     case 'nv-revert': nvRevert(); break;
     case 'nv-open': window.ff.nvidia.open(); toast('ok', 'Opening NVIDIA tuner', 'Accept the UAC prompt.'); break;
     case 'nv-measure': nvMeasure(t.dataset.key); break;
-    case 'nv-open-adv': switchView('nvidia-advanced'); break;
+    case 'nv-open-adv': if (t.getAttribute('aria-disabled') === 'true') break; switchView('nvidia-advanced'); break;
     case 'nv-close-adv': switchView('nvidia'); break;
     case 'nv-clearsel': { state.nvidia.sel.clear(); renderNvidia(); break; }
+    case 'nv-retry': { nvLoaded = false; loadNvidia(true); break; }
     case 'nv-applycustom': nvApplyCustom(); break;
     case 'nv-reverify': nvReverify(); break;
 
     /* ---- Windows health ---- */
     case 'health-scan': runHealthScan(!!t.dataset.deep); break;
-    case 'health-elevate': window.ff.relaunchElevated(); break;
+    case 'health-elevate': requestElevation(); break;
     case 'health-fix': openRepairFor(t.dataset.id); break;
 
     /* ---- Repair ---- */
@@ -750,11 +1153,22 @@ document.addEventListener('click', async (e) => {
     case 'img-launch': imgLaunchConfirmed(); break;
   }
 });
-// keyboard activation for div[role=button] expander headers
+// keyboard activation for [role=button] controls (expander chevrons, search result cards)
 document.addEventListener('keydown', (e) => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target instanceof Element && e.target.matches('[role="button"][data-act]')) {
     e.preventDefault(); e.target.click();
+    return;
   }
+  if (!drawerOpen()) return;
+  // The drawer is modal: Escape closes it and Tab cycles inside it.
+  if (e.key === 'Escape') { e.preventDefault(); closeDrawer(); return; }
+  if (e.key !== 'Tab') return;
+  const d = $('#drawer');
+  const items = Array.from(d.querySelectorAll(FOCUSABLE)).filter((n) => n.offsetParent !== null || n === document.activeElement);
+  if (!items.length) { e.preventDefault(); try { d.focus(); } catch (_) {} return; }
+  const first = items[0], last = items[items.length - 1];
+  if (e.shiftKey && (document.activeElement === first || !d.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && (document.activeElement === last || !d.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
 });
 document.addEventListener('change', async (e) => {
   const t = e.target.closest('[data-act]'); if (!t) return;
@@ -762,6 +1176,11 @@ document.addEventListener('change', async (e) => {
   if (t.dataset.act === 'focus-sel') {
     const ids = t.dataset.ids; if (e.target.checked) focusSel.add(ids); else focusSel.delete(ids);
     $('#focusClose').disabled = focusSel.size === 0;
+  }
+  if (t.dataset.act === 'repair-norp') {
+    const rid = t.dataset.id;
+    if (e.target.checked) repairs.noRestorePoint.add(rid); else repairs.noRestorePoint.delete(rid);
+    renderRepair();
   }
   if (t.dataset.act === 'img-consent') {
     if (t.dataset.which === 'eula') img.consentEula = e.target.checked; else img.consentBitlocker = e.target.checked;
@@ -841,7 +1260,6 @@ function searchIndex() {
 }
 function runSearch(q) {
   const needle = q.trim().toLowerCase();
-  $('#searchTitle').textContent = needle ? `Search results` : 'Search results';
   const hits = !needle ? [] : searchIndex()
     .map((it) => {
       const name = it.name.toLowerCase();
@@ -856,17 +1274,24 @@ function runSearch(q) {
     .slice(0, 40)
     .map((x) => x.it);
 
+  // The count goes in the page title AND, as a visually-hidden line, at the top of the
+  // live region — otherwise a screen-reader user typing a query is never told how many
+  // results appeared. (Both branches of the old ternary assigned the same string.)
+  $('#searchTitle').textContent = needle
+    ? `${hits.length} result${hits.length === 1 ? '' : 's'} for “${q.trim()}”`
+    : 'Search results';
+  const announce = `<p class="sr-only">${hits.length} result${hits.length === 1 ? '' : 's'} for “${esc(q.trim())}”</p>`;
   if (!hits.length) {
-    $('#searchResults').innerHTML = `<div class="empty-state">
-      <span class="glyph">${GLYPH.search}</span>
+    $('#searchResults').innerHTML = announce + `<div class="empty-state">
+      <span class="glyph" aria-hidden="true">${GLYPH.search}</span>
       <h3>No results for “${esc(q.trim())}”</h3>
       <p>Nothing in the tweak, NVIDIA, health-check, or repair catalogs matches that. Try a shorter word, or browse the pages in the list on the left.</p>
     </div>`;
     return;
   }
-  $('#searchResults').innerHTML = `<div class="card-list">${hits.map((it) => `
+  $('#searchResults').innerHTML = announce + `<div class="card-list">${hits.map((it) => `
     <div class="scard clickable" data-act="search-go" data-view="${esc(it.view)}" role="button" tabindex="0">
-      <span class="scard-icon">${it.glyph || GLYPH.settings}</span>
+      <span class="scard-icon" aria-hidden="true">${it.glyph || GLYPH.settings}</span>
       <div class="scard-body">
         <div class="scard-title">${esc(it.name)}</div>
         <div class="scard-desc">${esc(it.desc || '')}</div>
@@ -881,11 +1306,11 @@ let searchReturnView = 'dashboard';
 $('#navSearch').addEventListener('input', (e) => {
   const q = e.target.value;
   const onSearch = $('#view-search').classList.contains('active');
-  if (!q.trim()) { if (onSearch) switchView(searchReturnView); return; }
+  if (!q.trim()) { if (onSearch) switchView(searchReturnView, false); return; }
   if (!onSearch) {
     const cur = $('.view.active');
     searchReturnView = cur ? cur.id.replace('view-', '') : 'dashboard';
-    switchView('search');
+    switchView('search', false);
   }
   runSearch(q);
 });
@@ -905,8 +1330,8 @@ $('#btnRestorePoint').onclick = async () => {
   $('#restoreStatus').textContent = r && r.success ? ` — ${r.message}` : ` — ${(r && r.message) || 'failed'}`;
 };
 $('#btnRevertAll').onclick = revertAll;
-$('#btnElevate').onclick = () => window.ff.relaunchElevated();
-$('#adminPill').onclick = () => { if (!state.admin) window.ff.relaunchElevated(); };
+$('#btnElevate').onclick = () => requestElevation();
+$('#adminPill').onclick = () => { if (!state.admin) requestElevation(); };
 
 /* ---------- NVIDIA page ---------- */
 const NV_PRESET_CHIPS = {
@@ -928,19 +1353,56 @@ function nvBadge(s) {
 let nvLoaded = false;
 async function loadNvidia(force) {
   if (nvLoaded && !force) { renderNvidia(); return; }
-  const [cat, det, games] = await Promise.all([window.ff.nvidia.catalog(), window.ff.nvidia.detect(), window.ff.nvidia.games()]);
-  state.nvidia.catalog = cat; state.nvidia.detect = det || {}; state.nvidia.games = (games && games.games) || [];
-  state.nvidia.active = (det && det.applied) || null;
-  nvLoaded = true; renderNvidia();
+  try {
+    const [cat, det, games] = await Promise.all([window.ff.nvidia.catalog(), window.ff.nvidia.detect(), window.ff.nvidia.games()]);
+    state.nvidia.catalog = cat; state.nvidia.detect = det || {}; state.nvidia.games = (games && games.games) || [];
+    state.nvidia.active = (det && det.applied) || null;
+    state.nvidia.error = isEngineError(cat) ? engineErrorText(cat) : null;
+  } catch (e) {
+    state.nvidia.catalog = null;
+    state.nvidia.error = String((e && e.message) || e);
+  } finally {
+    nvLoaded = true;
+    renderNvidia();
+  }
 }
 function nvHasSnapshot() { return !!(state.nvidia.detect && state.nvidia.detect.snapshots > 0); }
+/* Every region this function owns is written on EVERY path. The early return used to
+   write "NVIDIA data unavailable." into #nvStrip alone and leave four section headings
+   standing over empty space, which reads as "there is nothing here" rather than "this
+   could not be loaded" — and the sub-page could still be entered with no data at all. */
+function nvUnavailable(why) {
+  const msg = `The NVIDIA settings catalog could not be read${why ? ` — ${why}` : '.'}`;
+  const box = `<div class="empty">${esc(msg)}</div>`;
+  for (const sel of ['#nvStrip', '#nvPresets', '#nvInGame', '#nvAdvBar', '#nvAdvanced', '#nvPlacebo']) {
+    const el = $(sel); if (el) el.innerHTML = box;
+  }
+  const honesty = $('#nvHonesty');
+  if (honesty) {
+    honesty.innerHTML = infobarHtml('critical', GLYPH.error, 'NVIDIA settings could not be loaded',
+      `${msg} Nothing on this page is a statement about your driver configuration.`,
+      `<button class="fbtn" data-act="nv-retry">Retry</button>${diagButton(msg)}`);
+  }
+  const rv = $('#nvReverify'); if (rv) rv.hidden = true;
+  // Do not let the "every setting" sub-page be opened onto a blank view.
+  const adv = $('#nvAdvToggle');
+  if (adv) { adv.setAttribute('aria-disabled', 'true'); adv.classList.add('is-disabled'); adv.removeAttribute('tabindex'); }
+}
 function renderNvidia() {
   const cat = state.nvidia.catalog; const det = state.nvidia.detect || {};
-  if (!cat || !cat.settings) { $('#nvStrip').innerHTML = '<div class="empty">NVIDIA data unavailable.</div>'; return; }
+  // `presets` was the one key not guarded: a catalog missing it threw mid-render, after
+  // #nvStrip had already been written, leaving the rest of the page stale/empty and the
+  // exception escaping loadNvidia() unhandled.
+  if (isEngineError(cat) || !cat.settings || !cat.presets) {
+    nvUnavailable(state.nvidia.error || (cat && cat.error) || (cat && !cat.presets ? 'the catalog has no presets section.' : 'the catalog could not be parsed.'));
+    return;
+  }
+  const adv = $('#nvAdvToggle');
+  if (adv) { adv.removeAttribute('aria-disabled'); adv.classList.remove('is-disabled'); adv.setAttribute('tabindex', '0'); }
   const snapOk = nvHasSnapshot();
   $('#nvStrip').innerHTML = `
     <div class="scard">
-      <span class="scard-icon">${GLYPH.chip}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.chip}</span>
       <div class="scard-body">
         <div class="scard-title">GeForce driver</div>
         <div class="scard-desc">Driver configuration only. No injection and no overlays, so it is safe under anti-cheat.</div>
@@ -951,7 +1413,7 @@ function renderNvidia() {
       </div>
     </div>
     <div class="scard">
-      <span class="scard-icon">${GLYPH.history}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.history}</span>
       <div class="scard-body">
         <div class="scard-title">Driver settings restore point</div>
         <div class="scard-desc">A full snapshot of the driver profile database, taken before anything is applied</div>
@@ -963,7 +1425,7 @@ function renderNvidia() {
       </div>
     </div>
     <div class="scard">
-      <span class="scard-icon">${GLYPH.monitor}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.monitor}</span>
       <div class="scard-body">
         <div class="scard-title">G-SYNC / VRR display</div>
         <div class="scard-desc">Sync settings are only written when this is on. Confirm your display supports variable refresh first.</div>
@@ -979,15 +1441,15 @@ function renderNvidia() {
   if (rv) {
     if (curDrv && catDrv && curDrv !== catDrv) {
       rv.hidden = false;
-      rv.innerHTML = `<div class="infobar caution"><span class="glyph">${GLYPH.warning}</span><div class="ib-body"><span class="ib-title">Catalog verified on a different driver</span><span class="ib-msg">This settings catalog was verified on driver ${esc(catDrv)}, but yours is ${esc(curDrv)}. Re-verify the setting IDs against your driver before applying.</span></div><div class="ib-actions"><button class="fbtn" data-act="nv-reverify">Re-verify (admin)</button></div></div>`;
+      rv.innerHTML = `<div class="infobar caution"><span class="glyph" aria-hidden="true">${GLYPH.warning}</span><div class="ib-body"><span class="ib-title">Catalog verified on a different driver</span><span class="ib-msg">This settings catalog was verified on driver ${esc(catDrv)}, but yours is ${esc(curDrv)}. Re-verify the setting IDs against your driver before applying.</span></div><div class="ib-actions"><button class="fbtn" data-act="nv-reverify">Re-verify (admin)</button></div></div>`;
     } else if (unresolved.length) {
       rv.hidden = false;
-      rv.innerHTML = `<div class="infobar caution"><span class="glyph">${GLYPH.warning}</span><div class="ib-body"><span class="ib-msg">${unresolved.length} setting(s) couldn't be resolved on your driver and are disabled.</span></div><div class="ib-actions"><button class="fbtn" data-act="nv-reverify">Re-verify (admin)</button></div></div>`;
+      rv.innerHTML = `<div class="infobar caution"><span class="glyph" aria-hidden="true">${GLYPH.warning}</span><div class="ib-body"><span class="ib-msg">${unresolved.length} setting(s) couldn't be resolved on your driver and are disabled.</span></div><div class="ib-actions"><button class="fbtn" data-act="nv-reverify">Re-verify (admin)</button></div></div>`;
     } else { rv.hidden = true; }
   }
   // Settings rows, not a comparison grid: each profile is a SettingsExpander whose
   // child rows are the exact driver settings it writes.
-  const presets = cat.presets;
+  const presets = cat.presets || {};   // belt and braces; the guard above already covers it
   const vrrKeys = ['gsync-global', 'gsync-mode', 'vsync-on'];
   $('#nvPresets').innerHTML = Object.keys(presets).map((k) => {
     const p = presets[k]; const feat = k === 'balanced'; const active = state.nvidia.active === k;
@@ -1011,8 +1473,8 @@ function renderNvidia() {
       <div class="scard-control"><span class="scard-value">${esc(c[1])}</span></div>
     </div>`).join('');
     return `<div class="sexpander" id="nvprofile-${k}">
-      <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
-        <span class="scard-icon">${feat ? GLYPH.speed : GLYPH.game}</span>
+      <div class="scard sexp-head" data-act="expander">
+        <span class="scard-icon" aria-hidden="true">${feat ? GLYPH.speed : GLYPH.game}</span>
         <div class="scard-body">
           <div class="scard-title">${esc(nm)}${feat ? ' <span class="tag-recommended">· Recommended</span>' : ''}${active ? ' <span class="tag-active">· Active</span>' : ''}</div>
           <div class="scard-desc">${esc(p.description)}</div>
@@ -1027,12 +1489,12 @@ function renderNvidia() {
       <div class="sexp-content">${factRows}${rows}</div>
     </div>`;
   }).join('');
-  $('#nvHonesty').innerHTML = `<div class="infobar"><span class="glyph">${GLYPH.info}</span><div class="ib-body"><span class="ib-title">What to expect on this PC</span><span class="ib-msg">At 1080p a 14900KF is CPU-bound, so the average FPS number will not move. What these settings buy is frametime consistency and correct sync behaviour; the latency win comes from in-game Reflex. Measure it before and after rather than taking our word for it.</span></div><div class="ib-actions"><button class="fbtn" data-act="nv-measure">Measure it</button></div></div>`;
+  $('#nvHonesty').innerHTML = `<div class="infobar"><span class="glyph" aria-hidden="true">${GLYPH.info}</span><div class="ib-body"><span class="ib-title">What to expect on this PC</span><span class="ib-msg">At 1080p a 14900KF is CPU-bound, so the average FPS number will not move. What these settings buy is frametime consistency and correct sync behaviour; the latency win comes from in-game Reflex. Measure it before and after rather than taking our word for it.</span></div><div class="ib-actions"><button class="fbtn" data-act="nv-measure">Measure it</button></div></div>`;
   $('#nvInGame').innerHTML = (cat.inGame || []).map((g) => `
     <label class="scard clickable">
       <input type="checkbox" class="fcheck" data-act="nv-ig">
       <div class="scard-body">
-        <div class="scard-title">${esc(g.name)}${g.warn ? ` <span class="status crit" style="margin-left:6px"><span class="glyph">${GLYPH.warning}</span></span>` : ''}</div>
+        <div class="scard-title">${esc(g.name)}${g.warn ? ` <span class="status crit" style="margin-left:6px"><span class="glyph" aria-hidden="true">${GLYPH.warning}</span></span>` : ''}</div>
         <div class="scard-desc">${esc(g.games)} — ${esc(g.note)}</div>
       </div>
     </label>`).join('');
@@ -1041,7 +1503,7 @@ function renderNvidia() {
   const applyDis = (!state.admin || !snapOk || selN === 0) ? 'disabled' : '';
   const nSettings = Object.keys(cat.settings).length;
   const bar = `<div class="scard">
-    <span class="scard-icon">${GLYPH.chip}</span>
+    <span class="scard-icon" aria-hidden="true">${GLYPH.chip}</span>
     <div class="scard-body">
       <div class="scard-title">Driver settings catalog</div>
       <div class="scard-desc">${nSettings} settings FrameForge can write, each verified against a driver setting ID</div>
@@ -1049,7 +1511,7 @@ function renderNvidia() {
     <div class="scard-control"><span class="scard-value">Driver ${esc(det.driver || 'unknown')}</span></div>
   </div>
   <div class="scard">
-    <span class="scard-icon">${GLYPH.settings}</span>
+    <span class="scard-icon" aria-hidden="true">${GLYPH.settings}</span>
     <div class="scard-body">
       <div class="scard-title">Custom profile</div>
       <div class="scard-desc">${selN} setting${selN === 1 ? '' : 's'} selected${snapOk ? '' : ' · a driver restore point is required first'}${state.admin ? '' : ' · applying needs administrator rights'}</div>
@@ -1077,7 +1539,7 @@ function renderNvidia() {
       <div class="scard-control"><span class="scard-value">${v}</span></div>
     </div>`).join('');
     return `<div class="sexpander${openRows.nvadv.has(key) ? ' open' : ''}" data-nvadv="${esc(key)}">
-      <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
+      <div class="scard sexp-head" data-act="expander">
         <input type="checkbox" class="fcheck" data-act="nv-sel" data-key="${key}" ${checked} ${gated ? 'disabled' : ''} aria-label="Add ${esc(s.name)} to the custom profile" title="${gated ? 'Confirm a G-SYNC/VRR display first' : 'Add to the custom profile'}">
         <div class="scard-body">
           <div class="scard-title">${esc(s.name)}</div>
@@ -1098,13 +1560,15 @@ function renderNvidia() {
   $('#nvAdvanced').innerHTML = rows;
   $('#nvPlacebo').innerHTML = (cat.placebo || []).map((p) => `
     <div class="scard" style="opacity:0.85">
-      <span class="scard-icon" style="color:var(--critical)">${GLYPH.dismiss}</span>
+      <span class="scard-icon" aria-hidden="true" style="color:var(--critical)">${GLYPH.dismiss}</span>
       <div class="scard-body">
         <div class="scard-title">${esc(p.name)}</div>
         <div class="scard-desc">${esc(p.why)}</div>
       </div>
       <div class="scard-control">${statusChip('crit', 'Not shipped')}</div>
     </div>`).join('');
+  wireExpanders($('#nvPresets'));
+  wireExpanders($('#nvAdvanced'));
 }
 async function nvSnapshot() {
   const r = await window.ff.nvidia.snapshot();
@@ -1171,14 +1635,19 @@ const HEALTH_GLYPH = {
   activation: GLYPH.key, time: GLYPH.clock, apps: GLYPH.list,
 };
 const healthGlyph = (id) => HEALTH_GLYPH[id] || GLYPH.health;
+// Order mirrors engine/health.ps1's Resolve-Status rank: critical > warning > unknown >
+// needs-admin > ok. 'unknown' used to sit BELOW 'Healthy', so a category nobody could
+// measure was filed under the good news; it ranks above both 'ok' and 'needs-admin'
+// because needs-admin means "elevate me and I will know" while unknown means "this was
+// not measured at all".
 const HEALTH_GROUPS = [
   { status: 'critical', title: 'Critical', chip: 'crit' },
   { status: 'warning', title: 'Needs attention', chip: 'warn' },
+  { status: 'unknown', title: 'Could not be determined', chip: 'unknown' },
   { status: 'needs-admin', title: 'Could not be fully checked', chip: 'admin' },
   { status: 'ok', title: 'Healthy', chip: 'good' },
-  { status: 'unknown', title: 'Unknown', chip: 'idle' },
 ];
-const HEALTH_CHIP = { critical: ['crit', 'Critical'], warning: ['warn', 'Needs attention'], 'needs-admin': ['admin', 'Needs administrator'], ok: ['good', 'Healthy'], unknown: ['idle', 'Unknown'] };
+const HEALTH_CHIP = { critical: ['crit', 'Critical'], warning: ['warn', 'Needs attention'], 'needs-admin': ['admin', 'Needs administrator'], ok: ['good', 'Healthy'], unknown: ['unknown', 'Could not be determined'] };
 const healthCheckById = (id) => (health.catalog || []).find((c) => c.id === id) || null;
 // Repair categories that have no health-checks.json entry still need a real heading.
 const CATEGORY_NAMES = { time: 'Clock and time sync', apps: 'Apps and package manager', shell: 'Shell and Explorer', drivers: 'Devices and drivers' };
@@ -1193,8 +1662,10 @@ async function loadHealth(force) {
   if (health.loaded && !force) { renderHealth(); return; }
   health.loaded = true;
   if (!health.catalog) {
-    const cat = await window.ff.health.catalog();
-    health.catalog = (cat && cat.checks) || [];
+    try {
+      const cat = await window.ff.health.catalog();
+      health.catalog = (cat && cat.checks) || [];
+    } catch (e) { health.catalog = []; }
   }
   renderHealth();
   if (!repairs.list) loadRepair();          // fix ids are resolved against the live list
@@ -1204,13 +1675,28 @@ async function loadHealth(force) {
 async function runHealthScan(deep) {
   if (health.scanning) return;
   health.scanning = true; renderHealth();
-  const res = await window.ff.health.scan(!!deep);
-  health.scan = res; health.scanning = false;
-  renderHealth();
+  // try/catch/finally: an IPC rejection used to leave scanning=true forever, so the guard
+  // above turned every later attempt into a no-op and the page said "Running read-only
+  // probes…" permanently, with no error and no way back short of restarting the app.
+  try {
+    health.scan = await window.ff.health.scan(!!deep);
+  } catch (e) {
+    health.scan = { ok: false, error: String((e && e.message) || e) };
+  } finally {
+    health.scanning = false;
+    renderHealth();
+  }
+  const res = health.scan;
   const t = (res && res.totals) || {};
-  const bad = (t.critical || 0) + (t.warning || 0);
+  // Unmeasured categories count toward the badge. A scan in which every probe crashed
+  // used to show no badge at all — indistinguishable from a clean machine.
+  const bad = (t.critical || 0) + (t.warning || 0) + (t.unknown || 0);
   const badge = $('#healthBadge'); if (badge) badge.textContent = bad ? String(bad) : '';
-  if (res && res.ok === false) toast('err', 'Health scan failed', res.error || 'The health engine returned no result.');
+  if (res && res.ok === false) {
+    toast(res.timedOut ? 'warn' : 'err',
+      res.timedOut ? 'Health scan did not finish' : 'Health scan failed',
+      engineErrorText(res));
+  }
 }
 
 function evidenceBlock(f) {
@@ -1223,12 +1709,41 @@ function evidenceBlock(f) {
   return `<div class="mono">${esc(text)}</div>`;
 }
 
+/* Finding severities, matching engine/health.ps1's vocabulary exactly:
+   info | unknown | warning | critical.
+
+   'unknown' is a FIRST-CLASS severity, not a flavour of 'info'. It means the engine could
+   not read that signal at all, and the whole point of it existing is that a hole in the
+   measurement must not look like a tidy note (docs/GAUNTLET.md rule 2). It therefore has
+   its own glyph, its own colour and its own words. The previous ternary chain sent it —
+   and any severity the engine may add later — to the info dot, which said the opposite.
+   Anything unrecognised now falls to 'unknown' rather than to 'info': the safe default is
+   "we do not know what this is", never "this is fine". */
+const SEV = {
+  critical: { glyph: GLYPH.dismiss, label: 'critical' },
+  warning: { glyph: GLYPH.warning, label: 'warning' },
+  unknown: { glyph: GLYPH.unknown, label: 'could not be determined' },
+  info: { glyph: GLYPH.info, label: 'information' },
+};
+function sevOf(severity) {
+  const k = String(severity == null ? '' : severity);
+  return Object.prototype.hasOwnProperty.call(SEV, k) ? SEV[k] : SEV.unknown;
+}
+function sevClass(severity) {
+  const k = String(severity == null ? '' : severity);
+  return Object.prototype.hasOwnProperty.call(SEV, k) ? k : 'unknown';
+}
+
 function findingRow(f) {
+  // The severity mark is a glyph whose only differentiator is colour — it collapses into
+  // one identical mark under forced-colors, and says nothing to a screen reader. The
+  // severity word travels with it.
+  const sv = sevOf(f.severity);
   return `<div class="sexp-row">
-    <span class="sev ${esc(f.severity)}">${f.severity === 'critical' ? GLYPH.dismiss : f.severity === 'warning' ? GLYPH.warning : GLYPH.info}</span>
+    <span class="sev ${esc(sevClass(f.severity))}"><span aria-hidden="true">${sv.glyph}</span><span class="sr-only">${esc(sv.label)}</span></span>
     <div class="scard-body">
       <div class="scard-title">${esc(f.detail)}</div>
-      <div class="scard-desc">${esc(f.severity)} <span class="sep-dot">·</span> ${esc(f.id)}</div>
+      <div class="scard-desc">${esc(sv.label)} <span class="sep-dot">·</span> ${esc(f.id)}</div>
       ${evidenceBlock(f)}
     </div>
   </div>`;
@@ -1254,7 +1769,7 @@ function renderHealth() {
     : `<button class="fbtn" data-act="health-scan" data-deep="1">Deep scan</button>
        <button class="fbtn accent" data-act="health-scan">${scan ? 'Scan again' : 'Scan now'}</button>`;
   let top = `<div class="scard">
-    <span class="scard-icon">${GLYPH.health}</span>
+    <span class="scard-icon" aria-hidden="true">${GLYPH.health}</span>
     <div class="scard-body">
       <div class="scard-title">Read-only health scan</div>
       <div class="scard-desc">Runs every check and changes nothing. Deep adds DISM ScanHealth, SFC verify-only, and online chkdsk.</div>
@@ -1264,7 +1779,7 @@ function renderHealth() {
   if (totals) {
     const when = scan.scannedAt ? String(scan.scannedAt).replace('T', ' ') : '';
     top += `<div class="scard">
-      <span class="scard-icon">${GLYPH.list}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.list}</span>
       <div class="scard-body">
         <div class="scard-title">${(scan.categories || []).length} categories checked${scan.deep ? ' (deep scan)' : ''}</div>
         <div class="scard-desc">${totals.ok} healthy <span class="sep-dot">·</span> ${totals.warning} need attention <span class="sep-dot">·</span> ${totals.critical} critical <span class="sep-dot">·</span> ${totals.needsAdmin} need administrator${totals.unknown ? ` <span class="sep-dot">·</span> ${totals.unknown} unknown` : ''}</div>
@@ -1274,7 +1789,7 @@ function renderHealth() {
   }
   if (scan && !scan.isAdmin) {
     top += `<div class="scard">
-      <span class="scard-icon">${GLYPH.admin}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.admin}</span>
       <div class="scard-body">
         <div class="scard-title">Some checks need administrator rights</div>
         <div class="scard-desc">The component store, NTFS dirty bit, index size, and dump inventory cannot be read. Those report "needs administrator", never healthy.</div>
@@ -1292,24 +1807,50 @@ function renderHealth() {
     return;
   }
   if (scan.ok === false) {
-    body.innerHTML = `<div class="section-head"><h2>Results</h2></div>
-      <div class="infobar critical"><span class="glyph">${GLYPH.error}</span><div class="ib-body"><span class="ib-title">The scan could not run</span><span class="ib-msg">${esc(scan.error || 'The health engine returned no result.')}</span></div></div>`;
+    // A scan that was stopped on the clock is "could not determine", not a hard failure —
+    // and it is never a clean result. Both say plainly that nothing was measured.
+    const timed = !!scan.timedOut;
+    const why = engineErrorText(scan);
+    body.innerHTML = `<div class="section-head"><h2>Results</h2></div>` +
+      infobarHtml(timed ? 'caution' : 'critical', timed ? GLYPH.warning : GLYPH.error,
+        timed ? 'Could not determine — the scan did not finish' : 'The scan could not run',
+        /statement about your PC/i.test(why) ? why : `${why} Nothing here is a statement about your PC.`,
+        `<button class="fbtn" data-act="health-scan">Retry</button>${diagButton(why)}`);
     return;
   }
   const cats = scan.categories || [];
   const bad = cats.filter((c) => c.status === 'critical' || c.status === 'warning');
+  const unknownN = cats.filter((c) => c.status === 'unknown').length || ((scan.totals && scan.totals.unknown) || 0);
+  const needsAdminN = (scan.totals && scan.totals.needsAdmin) || cats.filter((c) => c.status === 'needs-admin').length;
   let html = '';
-  if (!bad.length) {
-    html += `<div class="section-head"><h2>Verdict</h2></div>
-      <div class="infobar success"><span class="glyph">${GLYPH.check}</span><div class="ib-body"><span class="ib-title">Nothing is broken here</span><span class="ib-msg">No category reported a warning or a critical fault.${(scan.totals && scan.totals.needsAdmin) ? ` ${scan.totals.needsAdmin} could not be fully checked without administrator rights, and are listed as such rather than as healthy.` : ''}</span></div></div>`;
+  if (!bad.length && unknownN) {
+    // The headline verdict must not be derived from probes that crashed. "Nothing is
+    // broken here" is only honest when every category actually reported.
+    html += `<div class="section-head"><h2>Verdict</h2></div>` +
+      infobarHtml('caution', GLYPH.warning, 'Some checks could not run',
+        `No category reported a warning or a critical fault, but ${unknownN} could not be measured at all${needsAdminN ? `, and ${needsAdminN} could not be fully checked without administrator rights` : ''}. Those categories are not reported as healthy — nothing is known about them.`, '');
+  } else if (!bad.length) {
+    html += `<div class="section-head"><h2>Verdict</h2></div>` +
+      infobarHtml('success', GLYPH.check, 'Nothing is broken here',
+        `No category reported a warning or a critical fault.${needsAdminN ? ` ${needsAdminN} could not be fully checked without administrator rights, and are listed as such rather than as healthy.` : ''}`, '');
   }
+  const grouped = new Set();
   for (const g of HEALTH_GROUPS) {
     const inGroup = cats.filter((c) => c.status === g.status);
     if (!inGroup.length) continue;
+    inGroup.forEach((c) => grouped.add(c));
     html += `<div class="section-head"><h2>${g.title}</h2></div>`;
     html += `<div class="card-list">${inGroup.map((c) => healthCard(c, g)).join('')}</div>`;
   }
+  // A category whose status matches no known group is shown, not dropped: a silently
+  // missing category is indistinguishable from a healthy one.
+  const ungrouped = cats.filter((c) => !grouped.has(c));
+  if (ungrouped.length) {
+    html += `<div class="section-head"><h2>Unreported status</h2></div>`;
+    html += `<div class="card-list">${ungrouped.map((c) => healthCard(c, { status: c.status, title: 'Unreported status', chip: 'idle' })).join('')}</div>`;
+  }
   body.innerHTML = html;
+  wireExpanders(body);
 }
 
 function healthCard(c, g) {
@@ -1336,6 +1877,12 @@ function healthCard(c, g) {
       <div class="scard-control"><button class="fbtn" data-act="health-elevate">Restart as administrator</button></div>
     </div>`;
   }
+  if (c.status === 'unknown') {
+    rows += `<div class="sexp-row stack">
+      <div class="row-label">This category was not measured</div>
+      <div class="row-note">The probe did not complete, so nothing is known about this part of Windows. It is deliberately not reported as healthy.</div>
+    </div>`;
+  }
   const fixes = resolvedFixes(check || { id: c.category });
   if (fixes.length && c.status !== 'ok') {
     rows += fixes.map((r) => `<div class="sexp-row">
@@ -1356,8 +1903,8 @@ function healthCard(c, g) {
     </div>`;
   }
   return `<div class="sexpander${openRows.health.has(c.category) ? ' open' : ''}" data-health="${esc(c.category)}">
-    <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
-      <span class="scard-icon">${healthGlyph(c.category)}</span>
+    <div class="scard sexp-head" data-act="expander">
+      <span class="scard-icon" aria-hidden="true">${healthGlyph(c.category)}</span>
       <div class="scard-body">
         <div class="scard-title">${esc(name)}</div>
         <div class="scard-desc">${esc(c.summary || '')}</div>
@@ -1374,7 +1921,12 @@ function healthCard(c, g) {
    The repair ladder from engine/repair.ps1: detect → preflight → (preview) → run
    → verify with the same probe, plus the ledger and its undo path.
    ===================================================================== */
-const repairs = { list: null, catalog: null, ledger: [], loaded: false, loading: false, preflight: {}, results: {}, busy: null, error: null };
+const repairs = {
+  list: null, catalog: null, ledger: [], loaded: false, loading: false,
+  preflight: {}, results: {}, busy: null, error: null,
+  // Repair ids the user has explicitly opted out of a System Restore checkpoint for.
+  noRestorePoint: new Set(),
+};
 const repairById = (id) => (repairs.list || []).find((r) => r.id === id) || null;
 const repairCatalogById = (id) => ((repairs.catalog || []).find((r) => r.id === id)) || null;
 const REPAIR_STATE_CHIP = {
@@ -1392,18 +1944,29 @@ async function loadRepair(force) {
   if (repairs.loading) return;
   if (repairs.loaded && !force) { renderRepair(); return; }
   repairs.loading = true; repairs.loaded = true;
-  await loadImageCatalog();
-  if (!health.catalog) { const hc = await window.ff.health.catalog(); health.catalog = (hc && hc.checks) || []; }
-  renderRepair();
-  const [list, cat, led] = await Promise.all([
-    window.ff.repair.list(), window.ff.repair.catalog(), window.ff.repair.ledger(),
-  ]);
-  repairs.list = (list && list.repairs) || null;
-  repairs.error = list && list.ok === false ? (list.error || 'The repair engine returned no result.') : null;
-  repairs.catalog = (cat && cat.repairs) || [];
-  repairs.ledger = (led && led.entries) || [];
-  repairs.loading = false;
-  renderRepair();
+  // try/catch/finally: without it, a rejected IPC call left loading=true forever, the
+  // guard above made "Re-detect" inert, and the page said "Detecting…" until restart.
+  try {
+    await loadImageCatalog();
+    if (!health.catalog) { const hc = await window.ff.health.catalog(); health.catalog = (hc && hc.checks) || []; }
+    renderRepair();
+    const [list, cat, led] = await Promise.all([
+      window.ff.repair.list(), window.ff.repair.catalog(), window.ff.repair.ledger(),
+    ]);
+    // An empty repairs array is a real answer shape but not a real answer: keep it as []
+    // so renderRepair can say "the engine returned no repairs" instead of showing a
+    // green chip over a void.
+    repairs.list = Array.isArray(list && list.repairs) ? list.repairs : null;
+    repairs.error = isEngineError(list) ? engineErrorText(list) : null;
+    repairs.timedOut = !!(list && list.timedOut);
+    repairs.catalog = (cat && cat.repairs) || [];
+    repairs.ledger = (led && led.entries) || [];
+  } catch (e) {
+    repairs.error = String((e && e.message) || e);
+  } finally {
+    repairs.loading = false;
+    renderRepair();
+  }
   if ($('#view-health').classList.contains('active')) renderHealth();
 }
 
@@ -1426,11 +1989,19 @@ async function repairAction(id, opts) {
     return;
   }
   repairs.busy = id; renderRepair();
-  const res = await window.ff.repair.run(id, o);
+  // The opt-out is only ever passed when the user ticked it on this repair's card.
+  if (repairs.noRestorePoint.has(id)) o.noRestorePoint = true;
+  let res;
+  try { res = await window.ff.repair.run(id, o); }
+  catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
   repairs.busy = null;
   repairs.results[id] = res;
   if (res && res.refused) toast('ok', 'Nothing to repair', res.message || 'Detection reports this subsystem is healthy.');
-  else if (res && res.ok === false) toast('err', 'Repair failed', (res.message || res.error) || r.name);
+  else if (res && res.timedOut) {
+    // An interrupted mutation is an unknown, in-progress state — not an engine error.
+    toast('warn', 'The repair was stopped on the clock',
+      'It exceeded its time budget and FrameForge stopped it and everything it had started. The change ledger shows which step was in progress — check that before running this again.');
+  } else if (res && res.ok === false) toast('err', 'Repair failed', engineErrorText(res) || r.name);
   else if (o.dryRun) toast('ok', 'Preview only', `Nothing was executed. ${(res.steps || []).length} step(s) listed.`);
   else if (res && res.result) {
     // stepsCompleted means every step ran; addressed additionally means the probe re-run agrees
@@ -1461,7 +2032,13 @@ function openRepairFor(id) {
   switchView('repair');
   setTimeout(() => {
     const el = $(`.sexpander[data-repair="${CSS.escape(id)}"]`);
-    if (el) { el.classList.add('open'); el.scrollIntoView({ block: 'center' }); ensureRepairPreflight(id); }
+    if (el) {
+      el.classList.add('open');
+      const chev = el.querySelector(':scope > .sexp-head > .chev');
+      if (chev) chev.setAttribute('aria-expanded', 'true');
+      el.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      ensureRepairPreflight(id);
+    }
   }, 60);
 }
 
@@ -1469,6 +2046,45 @@ function commandBlock(groups) {
   const lines = [];
   for (const g of (groups || [])) for (const c of (g.commands || [])) lines.push(c);
   return lines.length ? `<div class="mono">${esc(lines.join('\n'))}</div>` : '';
+}
+
+/* ---------- the enforced System Restore checkpoint ----------
+   Five repairs carry restorePoint:"enforced": a checkpoint is created as their FIRST
+   step, and if it cannot be created the repair aborts. System Protection is OFF by
+   default on clean Windows 11 and on most OEM images, and is commonly disabled outright
+   by policy on managed fleets or collaterally by the "debloat" scripts this product's own
+   audience runs — so on a large share of machines those repairs abort at step 1. The
+   engine documents -NoRestorePoint as the opt-out; it was never plumbed through the GUI,
+   which meant a user with a set NTFS dirty bit could not run chkdsk-full-repair at all.
+
+   The checkbox is enabled only while a checkpoint is NOT known to be creatable, which is
+   also the honest default before the engine reports on it: "we could not confirm" is not
+   "we confirmed it works". */
+function restorePointRow(r, pf) {
+  const rp = pf && pf.restorePoint;
+  if (!rp || !rp.wouldCreate) return '';
+  const can = rp.canCreateCheckpoint;                 // true | false | 'unknown' | undefined
+  const optedOut = repairs.noRestorePoint.has(r.id);
+  const chip = can === true ? statusChip('good', 'A checkpoint can be created')
+    : can === false ? statusChip('crit', 'A checkpoint cannot be created')
+      : statusChip('idle', 'Checkpoint availability unknown');
+  const why = rp.canCreateCheckpointReason
+    || (can === false ? 'System Protection is off or blocked for this drive, so this repair will abort at step 1 unless you run it without a checkpoint.'
+      : can === true ? ''
+        : 'FrameForge could not confirm whether a System Restore checkpoint can be created on this PC. If it cannot, this repair aborts at its first step.');
+  return `<div class="sexp-row stack">
+    <div class="row-label">System Restore checkpoint</div>
+    <div class="row-note">${esc(rp.detail || '')}</div>
+    ${why ? `<div class="row-note">${esc(why)}</div>` : ''}
+    <div style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      ${chip}
+      <label class="consent-check" style="padding:0">
+        <input type="checkbox" class="fcheck" data-act="repair-norp" data-id="${esc(r.id)}" ${optedOut ? 'checked' : ''} ${can === true ? 'disabled' : ''}>
+        <span>Run without a restore point${can === true ? ' (not needed: a checkpoint can be created here)' : ''}</span>
+      </label>
+    </div>
+    ${optedOut ? '<div class="row-note">This run will pass -NoRestorePoint. Windows will not take a checkpoint first, so System Restore will not be able to roll this back.</div>' : ''}
+  </div>`;
 }
 
 function repairCard(r) {
@@ -1490,6 +2106,7 @@ function repairCard(r) {
     <div class="row-note">${esc((r.detection && r.detection.detail) || 'No detection detail.')}</div>
     <div class="row-note">${esc(meta)}</div>
   </div>`;
+  rows += restorePointRow(r, pf);
   rows += `<div class="sexp-row stack">
     <div class="row-label">Exactly what runs</div>
     <div class="repair-detail">${busy && !res ? '<span class="working">Working…</span>' : commandBlock(steps) || '<span class="row-note">No commands recorded for this repair.</span>'}</div>
@@ -1507,8 +2124,8 @@ function repairCard(r) {
   }
 
   return `<div class="sexpander${openRows.repair.has(r.id) ? ' open' : ''}" data-repair="${esc(r.id)}">
-    <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
-      <span class="scard-icon">${healthGlyph(r.category)}</span>
+    <div class="scard sexp-head" data-act="expander">
+      <span class="scard-icon" aria-hidden="true">${healthGlyph(r.category)}</span>
       <div class="scard-body">
         <div class="scard-title">${esc(r.name)}${r.tier === 'aggressive' ? ' <span class="tag-recommended" style="color:var(--caution)">· Aggressive</span>' : ''}</div>
         <div class="scard-desc">${esc(r.summary || '')}</div>
@@ -1539,8 +2156,15 @@ function repairResultRow(r, res) {
       ${res.refusalNote ? `<div class="row-note">${esc(res.refusalNote)}</div>` : ''}
     </div>`;
   }
+  if (res.timedOut) {
+    return `<div class="sexp-row stack">
+      <div class="row-label">Result — unknown</div>
+      <div class="row-note">${esc(engineErrorText(res))}</div>
+      <div class="row-note">This repair may have been part-way through a change when it was stopped. Check the change ledger below for the step that was in progress before running it again — do not simply re-run it.</div>
+    </div>`;
+  }
   if (res.ok === false) {
-    return `<div class="sexp-row stack"><div class="row-label">Result</div><div class="row-note">${esc(res.message || res.error || 'The repair failed.')}</div></div>`;
+    return `<div class="sexp-row stack"><div class="row-label">Result</div><div class="row-note">${esc(res.message || engineErrorText(res))}</div></div>`;
   }
   const rr = res.result || {};
   const stepList = (res.steps || []).map((s) => `<li>${esc(s.name)}: ${esc(s.status || 'done')}${s.detail ? ` — ${esc(s.detail)}` : ''}</li>`).join('');
@@ -1556,28 +2180,38 @@ function renderRepair() {
   const list = repairs.list;
   const loading = repairs.loading;
   let top = `<div class="scard">
-    <span class="scard-icon">${GLYPH.repair}</span>
+    <span class="scard-icon" aria-hidden="true">${GLYPH.repair}</span>
     <div class="scard-body">
       <div class="scard-title">Repair ladder</div>
       <div class="scard-desc">Detect first, name every command, then re-verify with the same probe. A repair refuses to run when nothing is broken.</div>
     </div>
     <div class="scard-control">${loading ? '<span class="working">Detecting…</span>' : `<button class="fbtn" data-act="repair-refresh">Re-detect</button>`}</div>
   </div>`;
-  if (list) {
+  if (list && list.length) {
+    // Buckets computed exhaustively. "report nothing broken" used to be
+    // length - problems - indeterminate, so a repair with NO detection object at all, or
+    // an unrecognised state string, was silently counted as healthy — and the green
+    // "Nothing broken" chip appeared whenever problems === 0, even on a page where every
+    // single card said "Could not check".
     const problems = list.filter((r) => r.detection && r.detection.state === 'problem').length;
-    const unknown = list.filter((r) => r.detection && r.detection.state === 'indeterminate').length;
+    const healthy = list.filter((r) => r.detection && r.detection.state === 'healthy').length;
+    const unknown = list.length - problems - healthy;
     top += `<div class="scard">
-      <span class="scard-icon">${GLYPH.list}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.list}</span>
       <div class="scard-body">
         <div class="scard-title">${list.length} repairs available</div>
-        <div class="scard-desc">${problems} match a detected problem <span class="sep-dot">·</span> ${list.length - problems - unknown} report nothing broken <span class="sep-dot">·</span> ${unknown} need administrator rights to check</div>
+        <div class="scard-desc">${problems} match a detected problem <span class="sep-dot">·</span> ${healthy} report nothing broken <span class="sep-dot">·</span> ${unknown} could not be checked</div>
       </div>
-      <div class="scard-control">${problems ? statusChip('warn', `${problems} to look at`) : statusChip('good', 'Nothing broken')}</div>
+      <div class="scard-control">${problems
+      ? statusChip('warn', `${problems} to look at`)
+      : unknown
+        ? statusChip('admin', `${unknown} could not be checked`)
+        : statusChip('good', 'Nothing broken')}</div>
     </div>`;
   }
   if (!state.admin) {
     top += `<div class="scard">
-      <span class="scard-icon">${GLYPH.admin}</span>
+      <span class="scard-icon" aria-hidden="true">${GLYPH.admin}</span>
       <div class="scard-body">
         <div class="scard-title">Most repairs need administrator rights</div>
         <div class="scard-desc">Preview and preflight stay available without elevation; they are read-only.</div>
@@ -1589,10 +2223,18 @@ function renderRepair() {
 
   const body = $('#repairBody');
   if (repairs.error) {
-    body.innerHTML = `<div class="section-head"><h2>Repairs</h2></div>
-      <div class="infobar critical"><span class="glyph">${GLYPH.error}</span><div class="ib-body"><span class="ib-title">The repair engine could not be reached</span><span class="ib-msg">${esc(repairs.error)}</span></div></div>`;
+    // A detection pass stopped on the clock is "could not determine", not a hard failure.
+    body.innerHTML = `<div class="section-head"><h2>Repairs</h2></div>` +
+      infobarHtml(repairs.timedOut ? 'caution' : 'critical', repairs.timedOut ? GLYPH.warning : GLYPH.error,
+        repairs.timedOut ? 'Could not determine — detection did not finish' : 'The repair engine could not be reached',
+        /statement about your PC/i.test(repairs.error) ? repairs.error : `${repairs.error} Nothing was checked, so nothing here is a statement about your PC.`,
+        `<button class="fbtn" data-act="repair-refresh">Retry</button>${diagButton(repairs.error)}`);
   } else if (!list) {
     body.innerHTML = `<div class="section-head"><h2>Repairs</h2></div><div class="empty">${loading ? 'Detecting the state of each subsystem…' : 'No repair data.'}</div>`;
+  } else if (!list.length) {
+    // An empty array is not "your PC is fine": it means the catalog produced no repairs.
+    body.innerHTML = `<div class="section-head"><h2>Repairs</h2></div>
+      <div class="empty">The repair engine returned no repairs. This is not a statement about your PC — nothing was checked.</div>`;
   } else {
     const cats = [];
     for (const r of list) if (!cats.includes(r.category)) cats.push(r.category);
@@ -1608,6 +2250,7 @@ function renderRepair() {
         <div class="card-list">${items.map(repairCard).join('')}</div>`;
     }).join('');
   }
+  wireExpanders(body);
 
   // ---- ledger ----
   const led = repairs.ledger || [];
@@ -1624,7 +2267,7 @@ function renderRepair() {
           : `<span class="list-caption">Not reversible</span>`;
       const rr = e.result || {};
       return `<div class="scard">
-        <span class="scard-icon">${healthGlyph((r && r.category) || '')}</span>
+        <span class="scard-icon" aria-hidden="true">${healthGlyph((r && r.category) || '')}</span>
         <div class="scard-body">
           <div class="scard-title">${esc(e.name || e.id)}</div>
           <div class="scard-desc">${esc(String(e.ranAt || '').replace('T', ' '))} <span class="sep-dot">·</span> ${(e.steps || []).length} step(s)${e.forced ? ' <span class="sep-dot">·</span> forced past a healthy detection' : ''}${rr.detail ? ` <span class="sep-dot">·</span> ${esc(rr.detail)}` : ''}</div>
@@ -1650,7 +2293,8 @@ const img = {
 
 async function loadImageCatalog() {
   if (img.catalog) return img.catalog;
-  img.catalog = await window.ff.image.catalog();
+  try { img.catalog = await window.ff.image.catalog(); }
+  catch (e) { img.catalog = { ok: false, error: String((e && e.message) || e) }; }
   return img.catalog;
 }
 
@@ -1673,11 +2317,23 @@ async function imgRun(action, opts) {
   renderImageRepair();
 }
 
+/* Readiness requires POSITIVE evidence of zero blockers. `(l.blockers || []).length === 0`
+   collapsed a MISSING blocker list into "no blockers", which enabled the single most
+   destructive button in the product on the strength of a field that was never there. */
+function launchBlockers(l) {
+  return Array.isArray(l && l.blockers) ? l.blockers : null;   // null = not reported
+}
+
 // The only path that passes confirm:true — and only from this explicit click.
 async function imgLaunchConfirmed() {
   const l = img.launch;
   if (!l || l.mode !== 'consent-contract') { toast('warn', 'Read the contract first', 'Load the consent contract before launching.'); return; }
-  if ((l.blockers || []).length) { toast('warn', 'Blocked', 'Every blocker must be cleared before setup can start.'); return; }
+  const bl = launchBlockers(l);
+  if (bl === null) {
+    toast('warn', 'Readiness could not be confirmed', 'The engine did not report a blocker list, so FrameForge cannot confirm this machine is ready. Nothing was started.');
+    return;
+  }
+  if (bl.length) { toast('warn', 'Blocked', 'Every blocker must be cleared before setup can start.'); return; }
   if (!img.consentEula || !img.consentBitlocker) { toast('warn', 'Consent required', 'Both statements must be accepted before setup can start.'); return; }
   img.busy = 'launch'; renderImageRepair();
   const res = await window.ff.image.launch({ isoPath: img.isoPath, confirm: true });
@@ -1695,8 +2351,8 @@ const railRow = (title, ok, desc) => `<div class="sexp-row">
 function imgExpander(id, glyph, title, desc, control, rows, open) {
   const isOpen = openRows.img.has(id) || (open && !openRows.img.size);
   return `<div class="sexpander${isOpen ? ' open' : ''}" data-img="${esc(id)}">
-    <div class="scard sexp-head" data-act="expander" role="button" tabindex="0">
-      <span class="scard-icon">${glyph}</span>
+    <div class="scard sexp-head" data-act="expander">
+      <span class="scard-icon" aria-hidden="true">${glyph}</span>
       <div class="scard-body"><div class="scard-title">${esc(title)}</div><div class="scard-desc">${esc(desc)}</div></div>
       <div class="scard-control">${control}</div>
       <span class="chev">${GLYPH.chevronDown}</span>
@@ -1709,6 +2365,12 @@ function renderImageRepair() {
   const host = $('#imageRepair'); if (!host) return;
   const cat = img.catalog;
   if (!cat) { host.innerHTML = `<div class="empty">Loading the fresh-image repair flow…</div>`; return; }
+  if (isEngineError(cat)) {
+    host.innerHTML = infobarHtml('critical', GLYPH.error, 'The fresh-image repair flow could not be loaded',
+      `${engineErrorText(cat)} None of this flow's safety rails were read, so nothing here can be started.`,
+      diagButton(engineErrorText(cat)));
+    return;
+  }
   const busy = img.busy;
   const cards = [];
 
@@ -1723,7 +2385,14 @@ function renderImageRepair() {
       <ul class="row-list plain"><li>Edition: ${esc(m.edition || '')}</li><li>Language: ${esc(m.language || '')}</li><li>Build: ${esc(m.build || '')}</li><li>Architecture: ${esc(m.arch || '')}</li></ul>
       <div class="row-note" style="margin-top:6px">${esc(m.rule || '')}</div>
     </div>`;
-    r += railRow('Free disk space', ra.diskOk === true, `${ra.freeSystemDriveGB} GB free on ${ra.systemDrive}; ${ra.minRequiredGB} GB required.`);
+    // Tri-state, like its three neighbours. `ra.diskOk === true` turned an ABSENT
+    // diskOk into a hard red "Red" chip described as "undefined GB free on undefined" —
+    // a measured failure reported for a rail that was never measured.
+    const diskOk = ra.diskOk === true ? true : ra.diskOk === false ? false : null;
+    const diskDesc = (ra.freeSystemDriveGB == null || ra.systemDrive == null)
+      ? 'Free space could not be read on this machine.'
+      : `${ra.freeSystemDriveGB} GB free on ${ra.systemDrive}${ra.minRequiredGB != null ? `; ${ra.minRequiredGB} GB required.` : '.'}`;
+    r += railRow('Free disk space', diskOk, diskDesc);
     r += railRow('AC power', ra.power ? !!ra.power.onAc : null, (ra.power && (ra.power.note || `Line status: ${ra.power.lineStatus}`)) || '');
     r += railRow('BitLocker', ra.bitlockerKnown ? !ra.bitlockerBlocking : null, (ra.bitlocker && ra.bitlocker.note) || `Status: ${(ra.bitlocker && ra.bitlocker.status) || 'unknown'}`);
     r += railRow('No pending reboot', ra.pendingReboot ? !ra.pendingReboot.any : null, ra.pendingReboot && ra.pendingReboot.any ? 'Restart first — setup fails with 0xC1900107 while a servicing reboot is pending.' : 'No servicing reboot is pending.');
@@ -1816,16 +2485,17 @@ function renderImageRepair() {
   let html = `<div class="card-list">${cards.join('')}</div>`;
   if ((cat.risks || []).length) {
     html += `<div class="section-head"><h2>What can go wrong</h2></div>
-      <div class="card-list">${cat.risks.map((r) => `<div class="scard"><span class="scard-icon" style="color:var(--caution)">${GLYPH.warning}</span><div class="scard-body"><div class="scard-title">${esc(String(r.id).replace(/-/g, ' '))}</div><div class="scard-desc">${esc(r.copy)}</div></div></div>`).join('')}</div>`;
+      <div class="card-list">${cat.risks.map((r) => `<div class="scard"><span class="scard-icon" aria-hidden="true" style="color:var(--caution)">${GLYPH.warning}</span><div class="scard-body"><div class="scard-title">${esc(String(r.id).replace(/-/g, ' '))}</div><div class="scard-desc">${esc(r.copy)}</div></div></div>`).join('')}</div>`;
   }
   host.innerHTML = html;
+  wireExpanders(host);
 }
 
 function consentCard() {
   const l = img.launch;
   const c = l && l.contract;
-  const blockers = (l && l.blockers) || [];
-  const ready = !!c && blockers.length === 0;
+  const blockers = launchBlockers(l);              // null = the engine did not report one
+  const ready = !!c && blockers !== null && blockers.length === 0;
   const consented = img.consentEula && img.consentBitlocker;
   const launched = img.launched && img.launched.ok;
 
@@ -1856,7 +2526,12 @@ function consentCard() {
     <div class="row-note">${esc(c.rollbackNote || '')}</div>
     <div class="row-note">${esc(c.bitlockerNote || '')}</div>
   </div>`;
-  if (blockers.length) {
+  if (blockers === null) {
+    rows += `<div class="sexp-row stack">
+      <div class="row-label">Readiness could not be confirmed</div>
+      <div class="row-note">The engine did not report a blocker list for this machine, so FrameForge cannot confirm there is nothing standing in the way. The launch stays disabled: an unread check is not a passed check.</div>
+    </div>`;
+  } else if (blockers.length) {
     rows += `<div class="sexp-row stack">
       <div class="row-label">Blocked until these are cleared</div>
       <ul class="blocker-list">${blockers.map((b) => `<li>${esc(b)}</li>`).join('')}</ul>
@@ -1870,9 +2545,10 @@ function consentCard() {
     <div class="consent-actions">
       <button class="fbtn accent" data-act="img-launch" ${(!ready || !consented || img.busy === 'launch' || launched) ? 'disabled' : ''}>${launched ? 'Setup started' : img.busy === 'launch' ? 'Starting…' : 'Start the repair install'}</button>
       <span class="list-caption">${launched ? 'Windows Setup is running with /noreboot. You choose when to restart.'
-    : !ready ? 'Disabled: the blockers above must be cleared first.'
-      : !consented ? 'Disabled: both statements must be accepted.'
-        : 'This is the point of no return FrameForge cannot undo. Windows keeps its own rollback.'}</span>
+    : blockers === null ? 'Disabled: the engine did not report a blocker list, so readiness could not be confirmed.'
+      : !ready ? 'Disabled: the blockers above must be cleared first.'
+        : !consented ? 'Disabled: both statements must be accepted.'
+          : 'This is the point of no return FrameForge cannot undo. Windows keeps its own rollback.'}</span>
     </div>
   </div>`;
   return imgExpander('consent', GLYPH.shield, 'Your decision', 'The heaviest repair FrameForge offers. Nothing starts until you explicitly agree here.',
@@ -1889,28 +2565,185 @@ function consentCard() {
 })();
 
 /* ---------- init ---------- */
+// One wedged IPC channel must not block first paint of everything else. `sys:isAdmin`
+// used to have no timeout at all in the main process, so a stalled powershell.exe left
+// Promise.all pending forever: a blank window, no toast, no spinner, no recovery.
+function withTimeout(p, ms, fallback, what) {
+  return Promise.race([
+    Promise.resolve(p).catch((e) => (typeof fallback === 'function' ? fallback(e) : fallback)),
+    new Promise((res) => setTimeout(() => res(typeof fallback === 'function'
+      ? fallback(new Error(`${what} did not answer within ${Math.round(ms / 1000)}s`))
+      : fallback), ms)),
+  ]);
+}
+
+async function retrySysInfo() {
+  try { state.sys = await window.ff.sysInfo(); }
+  catch (e) { state.sys = { ok: false, error: String((e && e.message) || e) }; }
+  revealNvidiaNav();
+  rerenderAll();
+}
+async function retryDetect() { await refreshDetect(); rerenderAll(); }
+function revealNvidiaNav() {
+  const s = state.sys;
+  if (isEngineError(s) || !Array.isArray(s.gpus)) return;
+  if (s.gpus.some((g) => g && g.vendor === 'NVIDIA')) { const n = $('#navNvidia'); if (n) n.hidden = false; }
+}
+
+// Apply the measured environment: the solid Fluent ground is always painted by the
+// native window, and body.mica is strictly additive on top of it.
+function applyEnv(env) {
+  if (!env) return;
+  state.env = env;
+  document.body.classList.toggle('mica', !!env.mica);
+  if (env.capture) { const cb = $('#captionFallback'); if (cb) cb.hidden = false; }
+}
+
+/* App-wide conditions that make everything below either impossible or untrustworthy. Each
+   one is a MEASURED state pushed up from the main process, and each renders as its own
+   infobar — they can be true at the same time.
+
+   1. The PowerShell engine does not work here at all (verified by running it, not predicted
+      from Get-ExecutionPolicy). This is the loud failure that replaced a silently dead app.
+   2. It works, but only from memory because a policy scope refuses script files.
+   3. The policy could not be read.
+   4. FrameForge is running as a DIFFERENT Windows account from the person at the keyboard
+      (i.e. it was elevated with someone else's admin credentials). Every per-user tweak is
+      refused in that state, so the reason has to be on screen. */
+function renderPolicyBanner(env) {
+  const host = $('#globalNotice'); if (!host) return;
+  const p = (env && env.psPolicy) || null;
+  const id = (env && env.identity) || null;
+  const bars = [];
+
+  if (p && p.engineUsable === false) {
+    bars.push(infobarHtml('critical', GLYPH.error,
+      'FrameForge cannot run its engine on this PC',
+      `${p.message || 'PowerShell produced no usable output.'} Nothing below has been measured.`,
+      diagButton(`${p.message || ''} ${p.probeError || ''}`.trim())));
+  } else if (p && p.blocked) {
+    // engineUsable is true (verified) or still null (probe not finished) — say which.
+    const verified = p.engineUsable === true;
+    bars.push(infobarHtml('caution', GLYPH.warning,
+      'Group Policy restricts PowerShell scripts on this PC',
+      `${p.message || ''}${verified ? '' : ' FrameForge is still checking whether its workaround actually works here; until it reports back, treat anything below as unconfirmed.'}`,
+      diagButton(p.message || '')));
+  } else if (p && p.mode === 'scriptblock' && p.engineUsable === true) {
+    // Nothing predicted this: the normal way of starting the engine produced nothing here and
+    // FrameForge fell back to the from-memory path, which it then verified. Unusual enough
+    // that the user should know why, even though results below ARE measured.
+    bars.push(infobarHtml('caution', GLYPH.warning,
+      'FrameForge had to start its engine a different way on this PC',
+      p.message || 'The usual way of running the engine produced nothing, so FrameForge switched to running it from memory and verified that path works.',
+      diagButton(p.message || '')));
+  } else if (p && (p.checked === false || p.error)) {
+    bars.push(infobarHtml('caution', GLYPH.warning,
+      'PowerShell execution policy could not be read',
+      `${p.error || 'The probe returned nothing.'} If engine calls below fail with no output, a policy scope is the first thing to check.`, ''));
+  }
+
+  if (id && id.profileMismatch === true) {
+    const who = id.interactiveName || id.interactiveSid || 'the signed-in user';
+    const me = id.tokenName || id.tokenSid || 'another account';
+    bars.push(infobarHtml('critical', GLYPH.admin,
+      'FrameForge is running as a different Windows account',
+      `It is running as ${me}, but ${who} is signed in at this PC. Per-user settings (Game DVR, Game Mode, visual effects, mouse acceleration) belong to whoever is signed in, so FrameForge will refuse to change them from here rather than write them into the wrong profile. Those tweaks never need administrator rights — close FrameForge and start it normally to use them.`,
+      diagButton(`running as ${me} / signed in ${who} (basis: ${id.basis || 'unknown'})`)));
+  } else if (id && id.profileMismatch === null) {
+    bars.push(infobarHtml('caution', GLYPH.warning,
+      'FrameForge cannot tell whose Windows settings it would change',
+      `${id.reason || 'The interactive user could not be identified.'} Per-user tweaks are refused until it can. Starting FrameForge without "Run as administrator" resolves this.`,
+      diagButton(id.probeError || id.reason || '')));
+  }
+
+  if (!bars.length) { host.hidden = true; host.innerHTML = ''; return; }
+  host.hidden = false;
+  host.innerHTML = bars.join('');
+}
+
+/* Segoe Fluent Icons is Windows 11 only, Segoe MDL2 Assets does not share its whole PUA
+   map, and a corrupt font cache or a font-substitution policy can lose both. The
+   codepoints then render as tofu, and the GLYPH-ONLY affordances (disclosure chevron,
+   combobox caret, list bullets, severity marks, drawer close) lose all meaning.
+
+   This is measured, not asserted. document.fonts.check() is NOT usable here: it returns
+   true for a font that is not installed at all (verified — it answers "can this text be
+   rendered", and the fallback chain always can). Instead each representative codepoint is
+   measured against a plain serif baseline: an icon face renders these at the full em
+   square, while a missing glyph falls back to the serif tofu box at a different width.
+   Any tofu among them switches the stylesheet to text substitutes. */
+const ICON_PROBE_CHARS = [
+  GLYPH.chevronDown,   // .chev disclosure
+  GLYPH.check,         // .row-list bullets
+  GLYPH.dismiss,       // .blocker-list / .row-list.no markers
+  GLYPH.bullet,        // .row-list.plain bullets
+  GLYPH.close,         // drawer close button
+];
+function probeIconFont() {
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return;
+    const width = (family, ch) => { ctx.font = `48px ${family}`; return ctx.measureText(ch).width; };
+    let anyTofu = false;
+    for (const ch of ICON_PROBE_CHARS) {
+      if (!ch) continue;
+      const base = width('serif', ch);
+      const fluent = width('"Segoe Fluent Icons", serif', ch);
+      const mdl2 = width('"Segoe MDL2 Assets", serif', ch);
+      // A difference from the serif baseline means an icon face actually supplied it.
+      if (Math.abs(fluent - base) < 0.5 && Math.abs(mdl2 - base) < 0.5) { anyTofu = true; break; }
+    }
+    document.body.classList.toggle('no-icons', anyTofu);
+  } catch (e) { /* if we cannot tell, leave the glyphs alone rather than guess */ }
+}
+
 (async function init() {
   // simple mode by default
   setMode('simple');
-  // Mica: main tells us whether the OS is drawing a backdrop; otherwise keep the solid fallback.
+  // Mica: main tells us whether the OS is actually DRAWING a backdrop (build +
+  // transparency setting + High Contrast), not just whether the build could.
   if (window.ff.env) {
     try {
-      const env = await window.ff.env();
-      if (env && env.mica) document.body.classList.add('mica');
-      // FF_CAPTURE runs only: draw the caption glyphs capturePage() can't composite.
-      if (env && env.capture) { const cb = $('#captionFallback'); if (cb) cb.hidden = false; }
+      const env = await withTimeout(window.ff.env(), 10000, null, 'ui:env');
+      applyEnv(env);
+      renderPolicyBanner(env);
     } catch (e) { /* solid fallback */ }
+    // Transparency effects and High Contrast can be toggled while we are running.
+    if (window.ff.onEnvChanged) window.ff.onEnvChanged((env) => { applyEnv(env); renderPolicyBanner(env); });
   }
+  if (window.ff.onTrayRevertAll) {
+    window.ff.onTrayRevertAll(async (res) => {
+      // Same rule as the in-app button: `ok !== false` is not the same as "it worked".
+      // revert-all reports success=false when it could not see the right account's ledger,
+      // and that has to reach the user instead of a green "Reverted everything".
+      if (res && res.ok !== false && res.success === true) {
+        toast('ok', 'Reverted everything', res.count != null ? `${res.count} change(s) undone.` : 'Done.');
+        await refreshDetect(); rerenderAll();
+      } else if (res && res.ok !== false) {
+        toast('err', 'Not everything was undone', (res.message || res.error || 'FrameForge could not confirm that anything was reverted.'), 16000);
+        await refreshDetect(); rerenderAll();
+      } else {
+        toast('err', 'Revert all tweaks failed', engineErrorText(res));
+      }
+    });
+  }
+  probeIconFont();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(probeIconFont).catch(() => {});
+
   try {
-    // Run the independent detection calls concurrently for a faster first paint.
-    const [admin, tw, sys, det] = await Promise.all([
-      window.ff.isAdmin(), window.ff.listTweaks(), window.ff.sysInfo(), window.ff.detectAll(),
+    // Run the independent detection calls concurrently for a faster first paint. Each is
+    // individually bounded and individually degradable: one failure must not blank the app.
+    const [admin, tw, sys] = await Promise.all([
+      withTimeout(window.ff.isAdmin(), 30000, false, 'administrator check'),
+      withTimeout(window.ff.listTweaks(), 30000, (e) => ({ ok: false, error: String((e && e.message) || e), tweaks: [] }), 'tweak catalog'),
+      withTimeout(window.ff.sysInfo(), 90000, (e) => ({ ok: false, error: String((e && e.message) || e) }), 'hardware detection'),
     ]);
-    state.admin = admin;
+    state.admin = !!admin;
     state.tweaks = (tw && tw.tweaks) || [];
     state.sys = sys;
-    state.detect = {}; if (Array.isArray(det)) for (const d of det) state.detect[d.id] = d;
-    updateAdminUI(); rerenderAll();
+    await refreshDetect();
+    updateAdminUI();
+    rerenderAll();
     // Preload the static catalogs so "Find a setting" can search health checks and
     // repairs before either page has been opened. Both are plain JSON reads.
     Promise.all([window.ff.health.catalog(), window.ff.repair.catalog()])
@@ -1920,11 +2753,17 @@ function consentCard() {
       })
       .catch(() => { /* search degrades to whatever is loaded */ });
     // Reveal the NVIDIA entry only on NVIDIA rigs.
-    if (state.sys && (state.sys.gpus || []).some((g) => g.vendor === 'NVIDIA')) { const n = $('#navNvidia'); if (n) n.hidden = false; }
-    if (state.sys && state.sys.ram && state.sys.ram.xmpLikelyOff) {
-      setTimeout(() => toast('warn', 'Free performance found', `Your RAM runs ${state.sys.ram.runningMTs} but is rated ${state.sys.ram.ratedMTs}. See “Enable XMP”.`, 7000), 900);
+    revealNvidiaNav();
+    // Only claim free performance when the rated speed was actually read.
+    const ram = !isEngineError(state.sys) ? state.sys.ram : null;
+    if (xmpState(ram) === true) {
+      setTimeout(() => toast('warn', 'Free performance found', `Your RAM runs ${ram.runningMTs} but is rated ${ram.ratedMTs}. See “Enable XMP”.`, 9000), 900);
     }
   } catch (err) {
+    // Last resort. Everything above degrades on its own, so reaching here means a bug —
+    // and the app still has to say something more useful than a vanishing toast.
+    console.error('[FrameForge] startup', err);
     toast('err', 'Startup error', String(err && err.message || err));
+    safely('Home', () => renderEngineFailure({ ok: false, error: String((err && err.message) || err) }));
   }
 })();

@@ -82,7 +82,12 @@
   --font-text: "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", -apple-system, system-ui, sans-serif;
   --font-small: "Segoe UI Variable Small", "Segoe UI", -apple-system, system-ui, sans-serif;
-  --font-icon: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  /* Terminated with a generic family: "Segoe Fluent Icons" is Windows 11 only and
+     "Segoe MDL2 Assets" does not share its whole PUA map, so on Windows 10, Server, LTSC
+     images, or a machine with a corrupt font cache the chain used to dead-end in tofu.
+     app.js additionally probes for the faces at startup and sets body.no-icons, which
+     swaps the GLYPH-ONLY affordances below for text/CSS-drawn substitutes. */
+  --font-icon: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
   --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
 }
 
@@ -425,6 +430,10 @@ body.advanced .nav-toggle-row:hover .mini-switch::after { left: 21px; }
   font-weight: 600;
   padding: 4px 0 20px 0;
 }
+/* switchView() moves focus to the page heading so a screen reader announces the new page.
+   The heading is not an interactive control, so it takes the focus without drawing a
+   focus ring — the ring belongs to things you can operate. */
+.page-title:focus, .page-title:focus-visible { outline: none; box-shadow: none; }
 /* Settings-style sub-page header: a breadcrumb at Title size, parent clickable.
    Navigation lives in the header row, never as an arrow glued to the H1. */
 .page-title.breadcrumb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
@@ -500,6 +509,9 @@ body.advanced .nav-toggle-row:hover .mini-switch::after { left: 21px; }
 .status.crit .glyph { color: var(--critical); }
 /* needs-admin is its own state, never folded into "ok" */
 .status.admin .glyph { color: var(--accent); }
+/* A category nobody could measure. Distinct from .idle (a neutral "nothing yet") because
+   "could not be determined" is a result, and from .warn because it is not a known fault. */
+.status.unknown .glyph { color: var(--caution); opacity: 0.85; }
 .status.idle .glyph { color: var(--text-tertiary); }
 
 /* ---------- SettingsExpander ---------- */
@@ -666,7 +678,7 @@ body.dark .fcombo select { border-color: var(--elev-bottom); border-top-color: v
 .fcombo select:hover { background: var(--ctrl-fill-secondary); }
 .fcombo select:disabled { color: var(--text-disabled); background: var(--ctrl-fill-disabled); }
 .fcombo::after {
-  content: "\E70D";
+  content: "\E70D" / "";
   font-family: var(--font-icon);
   font-size: 12px;
   color: var(--text-secondary);
@@ -774,13 +786,29 @@ body.dark .ftext:focus { background: #1F1F1F; }
 .empty-state h3 { font-size: 14px; font-weight: 600; }
 .empty-state p { font-family: var(--font-small); font-size: 12px; line-height: 16px; color: var(--text-secondary); max-width: 420px; }
 
-/* ---------- toasts ---------- */
-.toast-stack {
+/* ---------- toasts ----------
+   Two live regions (polite + assertive) share one fixed host so they stack instead of
+   overlapping. The host is clamped to the viewport: on a small or heavily scaled panel a
+   bottom-anchored stack could otherwise render below the visible area, and toasts are
+   this app's only feedback channel. */
+.toast-host {
   position: fixed;
-  bottom: 16px; right: 16px;
-  display: flex; flex-direction: column; gap: 8px;
+  right: 16px;
+  bottom: 16px;
+  max-height: calc(100vh - 32px);
+  max-width: calc(100vw - 32px);
+  overflow: hidden auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   z-index: 100;
+  pointer-events: none;
 }
+.toast-host > * { pointer-events: auto; }
+.toast-stack {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.toast-stack:empty { display: none; }
 .toast {
   display: flex;
   align-items: flex-start;
@@ -868,18 +896,28 @@ body.dark .ftext:focus { background: #1F1F1F; }
   color: var(--text-secondary); padding-left: 18px; position: relative; user-select: text;
 }
 .row-list li::before {
-  content: "\E73E"; font-family: var(--font-icon); font-size: 10px;
+  content: "\E73E" / ""; font-family: var(--font-icon); font-size: 10px;
   position: absolute; left: 0; top: 3px; color: var(--text-tertiary);
 }
-.row-list.plain li::before { content: "\E730"; font-size: 8px; top: 4px; }
-.row-list.no li::before { content: "\E711"; color: var(--critical); }
+.row-list.plain li::before { content: "\E730" / ""; font-size: 8px; top: 4px; }
+.row-list.no li::before { content: "\E711" / ""; color: var(--critical); }
 .row-list.yes li::before { color: var(--success); }
 
-/* Severity dot used on finding rows. */
-.sev { font-family: var(--font-icon); font-size: 12px; width: 16px; flex-shrink: 0; text-align: center; }
+/* Severity dot used on finding rows.
+   'unknown' is the doctrine's "could not determine" and is NOT a shade of 'info': info is a
+   note about something we DID measure, unknown is a hole where a measurement should be. It
+   had no rule here at all, so it inherited the bare .sev colour and read exactly like a
+   neutral note. It now gets the caution colour (the same family as 'warning', because an
+   unmeasured signal is a problem) at a lighter weight than an actual fault, plus a dotted
+   underline so it is still distinguishable when colour is unavailable. */
+.sev { font-family: var(--font-icon); font-size: 12px; width: 16px; flex-shrink: 0; text-align: center; color: var(--text-tertiary); }
 .sev.critical { color: var(--critical); }
 .sev.warning { color: var(--caution); }
+.sev.unknown { color: var(--caution); opacity: 0.85; }
 .sev.info { color: var(--text-tertiary); }
+/* Colour is never the only signal: the finding's own row carries the words "could not be
+   determined", and this dotted rule marks the same row for anyone who cannot see the hue. */
+.sexp-row > .sev.unknown + .scard-body > .scard-desc { text-decoration: underline dotted; text-underline-offset: 3px; }
 
 /* Consent gate (fresh-image repair). Deliberately un-pretty: it is a contract, not a CTA. */
 .consent-gate { border-top: 1px solid var(--divider); background: var(--card-bg-secondary); padding: 16px 16px 16px 52px; }
@@ -892,9 +930,172 @@ body.dark .ftext:focus { background: #1F1F1F; }
   font-family: var(--font-small); font-size: 12px; line-height: 17px; color: var(--text-primary);
   padding-left: 18px; position: relative;
 }
-.blocker-list li::before { content: "\E711"; font-family: var(--font-icon); font-size: 10px; position: absolute; left: 0; top: 3px; color: var(--critical); }
+.blocker-list li::before { content: "\E711" / ""; font-family: var(--font-icon); font-size: 10px; position: absolute; left: 0; top: 3px; color: var(--critical); }
 
 /* Inline "working…" caption for long-running engine calls. */
 .working { font-family: var(--font-small); font-size: 12px; color: var(--text-secondary); }
-/* Native NavigationView never narrows its expanded pane — the 320px pane is kept at
-   every window size (minWidth 960 still leaves the content region its 640px minimum). */
+
+/* App-wide condition banner (e.g. Group Policy blocking the PowerShell engine). */
+.global-notice { margin: 0 0 16px 8px; max-width: 1000px; }
+
+/* Text that exists only for assistive technology: severity words on colour-only marks,
+   result counts on the search live region. */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The disclosure chevron is a real control now (role=button, aria-expanded), so it needs
+   button-ish affordance without button-ish default chrome. */
+.chev { background: none; border: 0; cursor: default; }
+.chev:hover { color: var(--text-primary); }
+
+/* A card that cannot be opened because its data failed to load. */
+.scard.is-disabled { opacity: 0.5; pointer-events: none; }
+
+/* =====================================================================
+   Reduced motion
+   Windows Settings > Accessibility > Visual effects > Animation effects maps to
+   prefers-reduced-motion: reduce. A user who explicitly asked Windows for no animation
+   was still getting a full-page 12px translate on every navigation.
+   ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .view { animation: none; }
+}
+
+/* =====================================================================
+   Windows High Contrast (forced-colors)
+   Under forced-colors the system replaces every colour, so anything whose only
+   differentiator IS colour disappears. Borders and system colour keywords survive.
+   ===================================================================== */
+@media (forced-colors: active) {
+  /* The checkbox tick is a data-URI background-image with a hard-coded white stroke;
+     background-image is NOT forced, so the tick sat invisibly on a forced Canvas fill.
+     Opting this one control out of forced-colors keeps the tick legible on Highlight. */
+  .fcheck { border: 1px solid CanvasText; background: Canvas; }
+  .fcheck:checked {
+    forced-color-adjust: none;
+    background-color: Highlight;
+    border-color: Highlight;
+    background-image: var(--check-img);
+  }
+  :root { --check-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23ffffff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+
+  /* Selected page: a translucent background and an accent-coloured pseudo-element are
+     both forced flat, so the selected item became indistinguishable from the others.
+     Borders are preserved, and Highlight/HighlightText are honoured. */
+  .nav-item.active {
+    background: Highlight;
+    color: HighlightText;
+    border-inline-start: 3px solid Highlight;
+  }
+  .nav-item.active .glyph, .nav-item.active .nav-label { color: HighlightText; }
+  .nav-item.active::before { background: HighlightText; }
+
+  /* Toggle tracks/knobs and the score bar are colour-only; give them explicit,
+     forced-colors-safe values instead of letting them collapse into one flat block. */
+  .fswitch .switch-track, .nav-toggle-row .mini-switch { border: 1px solid CanvasText; background: Canvas; }
+  .fswitch input:checked ~ .switch-track,
+  body.advanced .nav-toggle-row .mini-switch { forced-color-adjust: none; background: Highlight; border-color: Highlight; }
+  .fswitch .switch-knob, .nav-toggle-row .mini-switch::after { background: CanvasText; }
+  .fswitch input:checked ~ .switch-track .switch-knob,
+  body.advanced .nav-toggle-row .mini-switch::after { background: HighlightText; }
+  .fprogress { forced-color-adjust: none; background: Canvas; border: 1px solid CanvasText; }
+  .fprogress > i { background: Highlight; }
+
+  /* Cards and expanders lose their translucent fills; a border keeps the structure. */
+  .scard, .sexpander, .infobar, .empty, .empty-state, .mono, .toast { border: 1px solid CanvasText; }
+  .sexp-row { border-top: 1px solid CanvasText; }
+  .admin-dot { border: 1px solid CanvasText; }
+}
+/* The advanced-mode toggle has no text state of its own (unlike .fswitch, which has
+   On/Off), so it is unreadable once colour is gone. Give it one. */
+.nav-toggle-row .mini-switch-state {
+  font-family: var(--font-small); font-size: 12px; line-height: 16px;
+  color: var(--text-secondary); min-width: 22px; text-align: right;
+}
+.nav-toggle-row .mini-switch-state::before { content: "Off"; }
+body.advanced .nav-toggle-row .mini-switch-state::before { content: "On"; }
+
+/* =====================================================================
+   Missing icon font (body.no-icons, set by app.js when neither Segoe icon face is
+   available). Labelled glyphs survive as tofu next to their text; the GLYPH-ONLY
+   affordances would lose all meaning, so they are replaced.
+   ===================================================================== */
+body.no-icons .glyph, body.no-icons .scard-icon, body.no-icons .cbtn { display: none; }
+body.no-icons .sev { font-family: var(--font-small); font-size: 11px; width: auto; }
+body.no-icons .sev > [aria-hidden="true"] { display: none; }
+body.no-icons .sev .sr-only {
+  position: static; width: auto; height: auto; margin: 0; overflow: visible;
+  clip: auto; clip-path: none; text-transform: uppercase;
+}
+/* font-size:0 hides the PUA character that lives in the element's own text content;
+   the ::after re-introduces a real, always-available substitute at readable size. */
+body.no-icons .chev { font-family: var(--font-text); font-size: 0; transform: none; }
+body.no-icons .chev::after { content: "\25BC"; font-size: 12px; }        /* ▼ */
+body.no-icons .sexpander.open > .sexp-head .chev { transform: none; }
+body.no-icons .sexpander.open > .sexp-head .chev::after { content: "\25B2"; }
+body.no-icons .fcombo::after { content: "\25BE"; font-family: var(--font-text); }
+body.no-icons .crumb-sep { font-size: 0; }
+body.no-icons .crumb-sep::before { content: "\203A"; font-family: var(--font-text); font-size: 16px; }  /* › */
+body.no-icons .row-list li::before { content: "\2022"; font-family: var(--font-text); }
+body.no-icons .row-list.no li::before { content: "\00D7"; }
+body.no-icons .row-list.yes li::before { content: "\2713"; }
+body.no-icons .blocker-list li::before { content: "\00D7"; font-family: var(--font-text); }
+body.no-icons .icon-btn { font-family: var(--font-text); font-size: 0; }
+body.no-icons .icon-btn::after { content: "\00D7"; font-size: 18px; }
+
+/* =====================================================================
+   Small / heavily scaled displays
+   1920x1080 at 150% is a ~1280x672 DIP work area; 1366x768 at 125% is ~1092x574. The
+   fixed 320px nav pane plus body overflow:hidden meant nothing reflowed and the bottom
+   strip — where the primary buttons live — was unreachable. The window itself is now
+   clamped to the work area in main.js; this makes the layout fit what is left.
+   ===================================================================== */
+@media (max-width: 900px) {
+  .navpane { width: 48px; padding: 0 2px 8px 2px; }
+  .navpane .nav-label,
+  .navpane .nav-profile-sub,
+  .navpane .nav-profile-name,
+  .navpane .nav-badge,
+  .navpane .mini-switch,
+  .navpane .mini-switch-state { display: none; }
+  .nav-profile { justify-content: center; padding: 4px 0 10px 0; }
+  .nav-search { margin: 0 2px 10px 2px; }
+  .nav-search input { padding: 0 8px 0 8px; font-size: 12px; }
+  .nav-search .glyph { display: none; }
+  .nav-scroll, .nav-foot { padding: 0 2px; }
+  .nav-item { gap: 0; padding: 0 12px; justify-content: center; }
+  .content { padding: 0 16px 24px 8px; }
+  .scard, .sexpander > .sexp-head { min-height: 56px; }
+  .sexp-row { padding-left: 16px; }
+  .consent-gate { padding-left: 16px; }
+  .tw-detail-block { padding-left: 16px; }
+  /* An icon-only rail needs icons. With no usable icon font the rail would be a column
+     of blank rows, so it keeps its labels (narrower) instead of collapsing. */
+  body.no-icons .navpane { width: 168px; }
+  body.no-icons .navpane .nav-label { display: block; }
+  body.no-icons .nav-item { justify-content: flex-start; }
+  body.no-icons .nav-profile { justify-content: flex-start; padding-left: 12px; }
+  body.no-icons .navpane .nav-profile-name { display: block; }
+}
+/* Very short windows: the titlebar is the only thing worth reclaiming. */
+@media (max-height: 620px) {
+  .page-title { font-size: 22px; line-height: 28px; padding: 2px 0 12px 0; }
+  .section-head { margin: 18px 0 6px 0; }
+}
+/* Native NavigationView never narrows its expanded pane, so the 320px pane is kept at
+   every size that can actually hold it; below 900px the pane collapses to an icon rail
+   rather than pushing the action buttons off-screen. */

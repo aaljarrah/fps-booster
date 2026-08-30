@@ -1,0 +1,8 @@
+Die folgenden Energiesparzustände sind auf diesem System verfügbar:
+    Standbymodus (S0 Niedriger Energiebedarf im Leerlauf) Netzwerk verbunden
+
+Die folgenden Energiesparzustände sind auf diesem System nicht verfügbar:
+    Ruhezustand
+        Der Ruhezustand wurde nicht aktiviert.
+    Schnellstart
+        Der Ruhezustand ist nicht verfügbar.

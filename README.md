@@ -1,16 +1,21 @@
 # FrameForge
 
-**The measurement-driven FPS optimizer for Windows. Tune. Measure. Prove.**
+**Diagnose, repair and tune Windows. Measure it. Prove it.**
 
-FrameForge is the anti-snake-oil PC performance tool. Every change it makes names the exact
-registry key or command it touches, records your previous value first, and is reversible with one
-click. It proves gains with **real Intel PresentMon frametime capture** (average + 1% low + 0.1% low
-+ stutter) instead of asking you to take its word for it. It refuses to do the placebo and dangerous
-"tweaks" that give game boosters a bad name.
+FrameForge is the anti-snake-oil PC tool. It does two jobs and applies the same rule to both:
+**never claim something it did not measure.**
 
-> It tells you the truth about your FPS, then proves it.
+- **Repair Windows.** 12 read-only health checks and 28 repairs covering Windows Update, the
+  component store, disk and file-system health, networking, the Store, search, printing, audio and
+  more — up to reinstalling Windows over a broken install while keeping your apps and files. Every
+  repair detects the problem first, names the exact commands it will run, and re-runs the same check
+  afterwards to see whether it actually worked.
+- **Tune for FPS.** Reversible, sourced optimizations proved with **real Intel PresentMon frametime
+  capture** (average + 1% low + 0.1% low + stutter), never with a made-up score.
 
-![Dashboard](screenshots/01-dashboard.png)
+> It tells you the truth about your PC, then proves it.
+
+![Windows health](screenshots/fluent/09-health.png)
 
 ---
 
@@ -29,8 +34,23 @@ adware. FrameForge is the opposite:
   verify-only items are grouped separately so they never inflate an "optimizations applied" count.
 - **Hardware-aware** — it fingerprints *your* rig and surfaces the highest-value real wins for it.
 
-This build is tuned for the target rig: **Windows 11 Pro 26200 · i9-14900KF (8P+16E) · RTX 5080 16GB ·
-32GB DDR5 (rated 5600, running 4800) · 980 PRO NVMe + 860 QVO SATA · 1920×1080 @ 241Hz**.
+The repair half is held to the same standard, and it is where most "PC fixer" tools fail hardest:
+
+- **It diagnoses before it repairs.** A repair refuses to run when nothing is broken. *"Nothing is
+  broken here"* is a result, not an error.
+- **It verifies afterwards** by re-running the same read-only check, and distinguishes *"every step
+  ran"* from *"the problem is actually gone"*.
+- **It says when it could not tell.** A check that was denied, timed out, or returned something
+  unrecognised reports exactly that. It never renders a failed measurement as a clean bill of health.
+- **Undo restores what was actually there**, captured before the change — not a hardcoded guess at
+  the Windows default. Caches are renamed with a timestamp rather than deleted, so even the
+  irreversible repairs leave a recovery path.
+- **The heavy rungs are consent-gated.** Reinstalling Windows shows you the exact command, what is
+  preserved, how long it takes, how many reboots, and the rollback window — and does nothing until
+  you agree.
+
+The FPS half is tuned for the author's rig (**i9-14900KF · RTX 5080 · 32GB DDR5 · 1920×1080 @ 241Hz**);
+the repair half is general-purpose.
 
 ---
 
@@ -44,6 +64,8 @@ This build is tuned for the target rig: **Windows 11 Pro 26200 · i9-14900KF (8P
 | **Benchmark** | Records real frametimes via PresentMon and shows Average FPS, 1% low, 0.1% low and stutter, with a Baseline → After A/B comparison and live deltas. |
 | **Game Focus** | Lists background apps that steal CPU/RAM/GPU-encoder time (Discord, NordVPN, SteelSeries, OneDrive…) and closes the ones you pick. System-critical and anti-cheat processes are never listed. |
 | **NVIDIA** | Dedicated competitive-tuning tab (see below). |
+| **Windows health** | 12 read-only diagnostic categories in ~7 seconds — system files, disk, Windows Update, network, Store, search, printing, crash history, disk space, boot time, audio, activation. Checks it could not run without elevation are grouped as *could not be fully checked*, never as healthy. |
+| **Repair** | The repair ladder, with each repair's live detection state. **Preview** dry-runs anything and prints the literal commands. Shows the ledger of what was changed and offers undo where the repair is reversible. Includes the consent-gated fresh-image repair. |
 | **Safety & Revert** | One-click System Restore point, full revert, elevation, and the no-snake-oil pledge. |
 
 ### NVIDIA tab — competitive driver tuning (judged + verified)
@@ -89,12 +111,12 @@ Reflex stays an in-game advisory because it's a per-title toggle, not a driver-p
 it's the real latency win regardless.
 
 <p align="center">
-  <img src="screenshots/03-tweaks.png" width="49%" />
-  <img src="screenshots/04-benchmark.png" width="49%" />
+  <img src="screenshots/fluent/03-tweaks.png" width="49%" />
+  <img src="screenshots/fluent/04-benchmark.png" width="49%" />
 </p>
 <p align="center">
-  <img src="screenshots/05-focus.png" width="49%" />
-  <img src="screenshots/06-safety.png" width="49%" />
+  <img src="screenshots/fluent/05-focus.png" width="49%" />
+  <img src="screenshots/fluent/06-safety.png" width="49%" />
 </p>
 
 ---
@@ -165,13 +187,22 @@ electron/        Electron main process (frameless window, tray, secure IPC, elev
 src/             Renderer (vanilla HTML/CSS/JS — no build step, fast & auditable)
   index.html  styles.css  app.js
 engine/          The PowerShell engine — single source of truth for system work
+  _lib.ps1       shared helpers (single-JSON emit, event/eventlog access, OS + capability probes)
   sysinfo.ps1    read-only hardware + state detection (emits JSON)
   engine.ps1     transactional apply/revert with a backup ledger (detect/apply/revert/revert-all/restore-point)
+  health.ps1     12 read-only diagnostic categories (scan / probe / deep)
+  repair.ps1     28 repairs: detect -> fix -> verify, state-capture ledger, undo, selftest
+  image.ps1      fresh Windows image repair (detect / validate / dism-source / preflight / consent / launch / verify)
+  compat.ps1     compatibility self-check — what this build can and cannot do on THIS machine
   measure.ps1    PresentMon wrapper + reviewer-grade metric math (avg / 1% / 0.1% low / stutter)
   procs.ps1      window/bloat process helpers for Benchmark + Game Focus
+  test/          the automated engine suite (mock-driven; see Running it)
+tools/vmtest/    Hyper-V matrix harness: provisions guests, breaks Windows on purpose, checks the repair notices
 data/
   tweaks.json    the declarative, sourced catalog (UI is a pure view over this)
-  state/applied.json   the backup ledger (prior values for exact revert)
+  health-checks.json  what each diagnostic reads, in plain English, and which repairs address it
+  repairs.json   the repair catalog — every command each repair runs, its reversibility and risks
+  image-repair.json / compat.json  fresh-image flow copy, and compat-check explanations
 resources/
   PresentMon.exe Intel PresentMon 2.4.1 (MIT) — the measurement engine
 ```
@@ -198,10 +229,45 @@ A portable build is produced in `dist/FrameForge-win32-x64/FrameForge.exe`.
 
 Engine self-tests:
 ```powershell
-powershell -NoProfile -File engine/engine.ps1 -Action detect-all      # read all tweak states
-powershell -NoProfile -File engine/sysinfo.ps1                         # hardware + state JSON
+npm run test:engine                                                    # the automated engine suite
+powershell -NoProfile -File engine/compat.ps1 -Action check            # what works on THIS machine
+powershell -NoProfile -File engine/health.ps1 -Action scan             # read-only health scan
+powershell -NoProfile -File engine/repair.ps1 -Action selftest         # catalog/engine contract check
+powershell -NoProfile -File engine/engine.ps1 -Action detect-all       # read all tweak states
 powershell -NoProfile -File engine/measure.ps1 -Action metrics -Frametimes "10,10,10,100"
 ```
+
+Nothing above changes the machine. To see what a repair *would* do without running it:
+
+```powershell
+powershell -NoProfile -File engine/repair.ps1 -Action run -Id wu-reset -DryRun
+```
+
+---
+
+## Supported environments (and what that is based on)
+
+FrameForge targets **English-language Windows 11** (21H2 through 25H2), x64, Home or Pro.
+
+What that claim rests on, stated plainly:
+
+- **Validated by execution** on one machine: Windows 11 Pro 25H2 (26200), en-US, x64 desktop, NVMe,
+  NVIDIA, non-domain. Read-only diagnostics, every repair's dry-run, detection across the whole
+  catalog, and the app itself have all been exercised there.
+- **Validated by the automated suite** under simulated conditions the dev box cannot provide: other
+  editions and builds, absent cmdlets, missing services, denied reads, empty and oversized event logs.
+- **Not yet validated by execution:** repairs actually running. Exactly one repair (`shell-restart`,
+  the safest in the catalog) has ever executed for real. The rest are proven not to fire when they
+  shouldn't, and proven to describe themselves accurately, but have not been proven to fix anything.
+  `tools/vmtest/` exists to close that gap in throwaway VMs, and has not been run.
+- **Degraded, not supported, on localized Windows.** A few checks read English text from command
+  output as their last resort. Where that fails, they report that they could not determine the
+  answer rather than guessing — the right failure direction, but a worse experience.
+- **Known to be unusable** where Group Policy enforces an AllSigned/Restricted PowerShell execution
+  policy, or under WDAC/AppLocker ConstrainedLanguage. The app detects these and says so rather than
+  failing silently.
+
+Run `engine/compat.ps1 -Action check` on any machine for a truthful per-capability report for it.
 
 ---
 
@@ -230,6 +296,28 @@ powershell -NoProfile -File engine/measure.ps1 -Action metrics -Frametimes "10,1
   array unwrap that made the NVIDIA restore index a string character instead of the snapshot name
   (fixed with `@()`). Afterward the machine was confirmed byte-for-byte back to its original state.
 
+### The repair and health engines (v0.2)
+
+These are newer than the tweak engine above and their testing status is different. Stated plainly so
+nobody mistakes design confidence for evidence:
+
+- **Proven by execution:** the 12-category health scan against real machine state; detection across
+  all 28 repairs; every repair's dry-run (each verified to mutate nothing, with the printed commands
+  matching the catalog); refuse-when-healthy; refuse-when-the-probe-itself-failed; the consent
+  contracts; `selftest`; and the app rendering all screens against the live engines.
+- **Proven by the automated suite** under simulated conditions: other editions and builds, absent
+  cmdlets, missing services, denied reads, unparseable and oversized inputs.
+- **Not proven:** repairs actually repairing. Exactly one repair has ever executed for real
+  (`shell-restart`). The rest are proven not to fire when they shouldn't and to describe themselves
+  accurately, but not proven to fix anything. `tools/vmtest/` was built to close this in throwaway
+  VMs and has not been run.
+- **Found by adversarial review, not by testing:** every round of blind review found defects that
+  reading the code had missed — a repair that reported success while silently doing nothing about the
+  finding it claimed to fix; a catalog that claimed its command list was verified when the check only
+  counted lines; a probe stating "no stuck print jobs" after its API threw; an unreadable build
+  number becoming `build 0`; and a screenshot harness that silently reused frames, producing evidence
+  that misrepresented the app. The review record is in `docs/GAUNTLET.md`.
+
 ---
 
 ## Roadmap (honest about what's next)
@@ -241,6 +329,13 @@ powershell -NoProfile -File engine/measure.ps1 -Action metrics -Frametimes "10,1
   mismatch and a display-adaptive frame cap); unresolvable settings are disabled, never blind-written.
 - ✅ **Measure-it A/B** — *done*: per-row hook into the Benchmark tab with an honest
   "within margin of error" verdict.
+- ✅ **Windows health + repair** — *done*: 12 read-only diagnostics and 28 repairs, each detecting
+  before it acts and verifying after, with a state-capture ledger and undo where reversible.
+- ✅ **Fresh-image repair** — *done*: consent-gated in-place reinstall that keeps apps, files and
+  settings, with media matching, a lighter component-store rung first, and post-repair verification.
+- **Run the VM matrix.** `tools/vmtest/` is built but has never run; Hyper-V is installed on the dev
+  box pending a reboot. This is the single highest-value gap — it is what turns "the repairs are
+  proven not to misfire" into "the repairs are proven to work."
 - **Per-game profiles** with an anti-cheat gate (already designed: never touch Vanguard/EAC/BattlEye).
 - **Automated game-library / shader-cache relocation** off the QLC SATA SSD.
 - **Code signing (EV cert)** — an unsigned elevated tweaker trips SmartScreen/Defender; signing is a

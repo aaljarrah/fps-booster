@@ -1,0 +1,24 @@
+
+Tool zur Verwaltung und Wartung von Bereitstellungsimages
+Version: 10.0.26200.1
+
+Abbildversion: 10.0.26200.9168
+
+[==========================100.0%==========================]
+
+Informationen zum Komponentenspeicher (WinSxS):
+
+Vom Windows-Explorer gemeldete Größe des Komponentenspeichers: 8.42 GB
+
+Tatsächliche Größe des Komponentenspeichers: 8.13 GB
+
+    Für Windows freigegeben: 6.55 GB
+    Sicherungen und deaktivierte Features: 1.32 GB
+    Zwischengespeicherte und temporäre Daten: 0.25 GB
+
+Datum der letzten Bereinigung: 2026-06-04 03:12:44
+
+Anzahl der wiederverwendbaren Pakete: 4
+Bereinigung des Komponentenspeichers empfohlen: Ja
+
+Der Vorgang wurde erfolgreich beendet.

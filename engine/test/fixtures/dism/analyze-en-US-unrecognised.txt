@@ -1,0 +1,12 @@
+
+Deployment Image Servicing and Management tool
+Version: 10.0.26200.1
+
+Component Store (WinSxS) information:
+
+Actual Size of Component Store : 6.44 GB
+
+Number of Reclaimable Packages : 0
+Component Store Cleanup Recommended : Unbekannt
+
+The operation completed successfully.
