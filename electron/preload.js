@@ -3,6 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // Secure, minimal API surface exposed to the renderer. No Node, no ipcRenderer leakage.
 contextBridge.exposeInMainWorld('ff', {
+  // UI environment (Mica availability, theme at startup)
+  env: () => ipcRenderer.invoke('ui:env'),
+
   // System
   sysInfo: () => ipcRenderer.invoke('sys:info'),
   isAdmin: () => ipcRenderer.invoke('sys:isAdmin'),
@@ -41,6 +44,34 @@ contextBridge.exposeInMainWorld('ff', {
     applyCustom: (keys, vrrOk) => ipcRenderer.invoke('nvidia:applyCustom', keys, vrrOk),
     revertApplied: () => ipcRenderer.invoke('nvidia:revertApplied'),
     buildCatalog: (refresh) => ipcRenderer.invoke('nvidia:buildCatalog', refresh),
+  },
+
+  // Windows health — read-only probes (the same probe verifies after a repair)
+  health: {
+    scan: (deep = false) => ipcRenderer.invoke('health:scan', !!deep),
+    probe: (category, deep = false) => ipcRenderer.invoke('health:probe', category, !!deep),
+    catalog: () => ipcRenderer.invoke('health:catalog'),
+  },
+
+  // Repair ladder
+  repair: {
+    list: () => ipcRenderer.invoke('repair:list'),
+    preflight: (id) => ipcRenderer.invoke('repair:preflight', id),
+    run: (id, opts) => ipcRenderer.invoke('repair:run', id, opts || {}),
+    undo: (id, opts) => ipcRenderer.invoke('repair:undo', id, opts || {}),
+    ledger: () => ipcRenderer.invoke('repair:ledger'),
+    catalog: () => ipcRenderer.invoke('repair:catalog'),
+  },
+
+  // Fresh-image repair — launch() is consent-contract mode unless { confirm: true }
+  image: {
+    detect: () => ipcRenderer.invoke('image:detect'),
+    validate: (opts) => ipcRenderer.invoke('image:validate', opts || {}),
+    preflight: (opts) => ipcRenderer.invoke('image:preflight', opts || {}),
+    launch: (opts) => ipcRenderer.invoke('image:launch', opts || {}),
+    verify: () => ipcRenderer.invoke('image:verify'),
+    acquireUrl: (opts) => ipcRenderer.invoke('image:acquireUrl', opts || {}),
+    catalog: () => ipcRenderer.invoke('image:catalog'),
   },
 
   // Misc

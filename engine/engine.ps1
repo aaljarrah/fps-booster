@@ -24,6 +24,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# Without this, non-ASCII in tweak copy (em-dashes, arrows) is substituted on the way to
+# stdout and the emitted JSON stops parsing. Matches engine/_lib.ps1.
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false) } catch {}
+
 $Root      = Split-Path -Parent $PSScriptRoot
 $TweaksDb  = Join-Path $Root 'data\tweaks.json'
 $StateDir  = Join-Path $Root 'data\state'
@@ -37,13 +41,15 @@ $IsAdmin = Test-Admin
 
 function Load-Tweaks {
   if (-not (Test-Path $TweaksDb)) { throw "tweaks.json not found at $TweaksDb" }
-  (Get-Content -Raw -Path $TweaksDb | ConvertFrom-Json).tweaks
+  # -Encoding UTF8 is load-bearing: tweaks.json has no BOM, so PS 5.1 would decode it
+  # as Windows-1252 and mangle every em-dash — which broke `-Action list` JSON outright.
+  (Get-Content -Raw -Encoding UTF8 -Path $TweaksDb | ConvertFrom-Json).tweaks
 }
 function Get-Tweak { param($Id) Load-Tweaks | Where-Object { $_.id -eq $Id } | Select-Object -First 1 }
 
 function Load-Ledger {
   if (-not (Test-Path $Ledger)) { return @() }
-  $parsed = Get-Content -Raw $Ledger | ConvertFrom-Json
+  $parsed = Get-Content -Raw -Encoding UTF8 $Ledger | ConvertFrom-Json
   if ($null -eq $parsed) { return @() }
   # Defensive: tolerate a legacy {value:[...],Count:n} wrapper from an older serializer.
   if ($parsed.PSObject.Properties.Name -contains 'value' -and $parsed.PSObject.Properties.Name -contains 'Count') { $parsed = $parsed.value }

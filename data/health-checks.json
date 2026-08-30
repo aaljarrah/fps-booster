@@ -1,0 +1,196 @@
+﻿{
+  "schemaVersion": 1,
+  "note": "UI-facing catalog for engine/health.ps1 categories. Every check here is read-only — the same probe runs before a fix (detect) and after it (verify). fixesAvailable lists repair ids that exist in data/repairs.json and are implemented by engine/repair.ps1; health.ps1 itself never fixes anything. This is a hard contract, not a wishlist: 'repair.ps1 -Action selftest' fails if any id here does not resolve to a real repair. Categories whose findings have no honest software fix say so in noFixesNote instead of listing an id that does not exist.",
+  "checks": [
+    {
+      "id": "system-files",
+      "name": "System files & component store",
+      "summary": "Checks whether the Windows component store is corrupt and whether a servicing reboot is pending.",
+      "whatWeCheck": [
+        "DISM corruption flag (Repair-WindowsImage -CheckHealth: Healthy / Repairable / NonRepairable)",
+        "Pending servicing reboot (Component Based Servicing RebootPending key)",
+        "Deep scan only: SFC verify-only pass (with the CBS.log [SR] tail captured as evidence) and a full DISM ScanHealth (slow, still read-only)"
+      ],
+      "fixesAvailable": ["dism-restorehealth", "sfc-scannow"],
+      "sources": [
+        "https://learn.microsoft.com/windows-hardware/manufacture/desktop/repair-a-windows-image",
+        "https://memstechtips.com/sfc-scannow-dism-repair-order-windows-11/"
+      ]
+    },
+    {
+      "id": "disk",
+      "name": "Disk & file-system health",
+      "summary": "Checks the NTFS dirty bit, physical drive health and wear, and recent disk error events.",
+      "whatWeCheck": [
+        "NTFS dirty bit on the system drive (fsutil dirty query)",
+        "Physical drive health status and SSD wear / media error counters (per-drive table attached as evidence)",
+        "NTFS, disk, and storage-controller error events from the last 7 days (Ntfs 55/98/130, disk 7/51/153, storahci 129 controller resets)",
+        "Deep scan only: an online chkdsk scan that detects but never repairs"
+      ],
+      "fixesAvailable": ["chkdsk-scan", "chkdsk-spotfix", "chkdsk-full-repair"],
+      "noFixesNote": "The hardware findings in this category (physical-disk-unhealthy, ssd-wear-critical, disk-media-errors) have NO software fix. chkdsk repairs the file system on top of the drive; it cannot repair the drive. The honest response to a failing or worn-out disk is a backup and a replacement, and FrameForge will not pretend otherwise by offering a button.",
+      "sources": [
+        "https://learn.microsoft.com/powershell/module/storage/repair-volume",
+        "https://learn.microsoft.com/windows-server/administration/windows-commands/chkdsk"
+      ]
+    },
+    {
+      "id": "windows-update",
+      "name": "Windows Update",
+      "summary": "Checks the update service pipeline, recent failures, staleness, and whether a reboot is pending.",
+      "whatWeCheck": [
+        "Update pipeline services (wuauserv, BITS, cryptsvc, Delivery Optimization, Update Orchestrator)",
+        "Install and scan failure events from the last 30 days (events 20, 31)",
+        "Days since the last successfully installed update",
+        "Failure codes from the last 25 update operations in the update history",
+        "The three pending-reboot registry signals"
+      ],
+      "fixesAvailable": ["wu-reset", "wu-reset-aggressive", "dism-restorehealth", "sfc-scannow"],
+      "sources": [
+        "https://learn.microsoft.com/troubleshoot/windows-client/installing-updates-features-roles/additional-resources-for-windows-update",
+        "https://www.automox.com/worklets/windows-update-events"
+      ]
+    },
+    {
+      "id": "network",
+      "name": "Network & DNS",
+      "summary": "Tests each network layer separately so the fix targets the layer that is actually broken.",
+      "whatWeCheck": [
+        "Physical adapter link state",
+        "Default gateway reachability",
+        "Internet reachability by raw IP (1.1.1.1) — bypasses DNS entirely",
+        "DNS name resolution (microsoft.com)",
+        "Captive-portal / NCSI probe (HTTP reachability of www.msftconnecttest.com on port 80)",
+        "Configured DNS servers",
+        "The discriminator: internet-by-IP works but DNS fails means a resolver problem, not a connectivity problem"
+      ],
+      "fixesAvailable": ["network-flush", "dns-change-resolver", "winsock-reset"],
+      "noFixesNote": "There is no separate ip-stack-reset repair: 'netsh int ip reset' is the second step of winsock-reset, because running one without the other is how people end up with a half-reset network stack. The old dns-flush id is now network-flush (flush + DHCP release/renew).",
+      "sources": [
+        "https://www.howtogeek.com/785351/how-and-why-to-perform-a-netsh-winsock-reset-on-windows/",
+        "https://learn.microsoft.com/powershell/module/dnsclient/resolve-dnsname"
+      ]
+    },
+    {
+      "id": "store",
+      "name": "Microsoft Store",
+      "summary": "Checks the Store package status, its dependency services, and recent app deployment errors.",
+      "whatWeCheck": [
+        "Microsoft Store package status (should report Ok)",
+        "Dependency services (AppX Deployment, Client License, Install Service, Delivery Optimization) — disabled is the failure signal",
+        "App deployment errors from the last 7 days"
+      ],
+      "fixesAvailable": ["store-cache-reset", "store-services-enable", "store-reregister", "store-reregister-all"],
+      "sources": [
+        "https://www.ninjaone.com/blog/how-to-re-register-microsoft-store-in-windows-11/"
+      ]
+    },
+    {
+      "id": "search",
+      "name": "Search & Start menu",
+      "summary": "Checks the search indexer, the index database file, and recent crashes of the search and Start menu hosts.",
+      "whatWeCheck": [
+        "Windows Search service state and start type",
+        "Indexer and shell host processes",
+        "Search index database size anomalies (0 bytes or over 10 GB)",
+        "Windows Search provider errors in the Application log from the last 7 days",
+        "Crashes of SearchHost / StartMenuExperienceHost in the last 7 days (event 1000)"
+      ],
+      "fixesAvailable": ["shell-restart", "search-index-rebuild"],
+      "sources": [
+        "https://support.microsoft.com/windows/search-indexing-in-windows-faq-da061c83-af6b-095c-0f7a-4dfecda4d15a"
+      ]
+    },
+    {
+      "id": "printing",
+      "name": "Printing",
+      "summary": "Checks the spooler, stuck jobs in the spool folder, printer error states, and recent print errors.",
+      "whatWeCheck": [
+        "Print Spooler service state",
+        "Files sitting in the spool folder (stuck jobs; needs admin)",
+        "Print jobs stuck in an Error or Blocked status (works without admin)",
+        "Printers reporting Error or Offline",
+        "Print service errors from the last 7 days"
+      ],
+      "fixesAvailable": ["spooler-clear-queue"],
+      "noFixesNote": "spooler-clear-queue is the only repair here, and it is deliberately narrower than this category. Two findings have no button on purpose. (1) spooler-disabled is reported at severity 'info', not as a fault: turning the Print Spooler off is a common, legitimate choice on a gaming rig and the standard PrintNightmare mitigation, so re-enabling it would be overriding a deliberate decision rather than fixing anything. Turn it back on yourself if you want to print — services.msc, or Set-Service -Name Spooler -StartupType Automatic. (2) printer-error-state covers printers reported Error OR Offline, and clearing the spool queue can only help the first kind. An Offline printer is almost always powered off, asleep, or off the network, which is a cable, a Wi-Fi network, or a power button — not something any software on this PC can repair. A run therefore reports stepsCompleted and verified separately, so 'every step ran' can never be mistaken for 'the printer came back'.",
+      "sources": [
+        "https://support.microsoft.com/windows/fix-printer-connection-and-printing-problems-in-windows-fb211c0f-e70a-1c62-49ba-de10bcca3bc2"
+      ]
+    },
+    {
+      "id": "stability",
+      "name": "Crashes & blue screens",
+      "summary": "Finds blue screens with their stop codes and separates true crashes from power-loss shutdowns.",
+      "whatWeCheck": [
+        "Bug check events with stop codes from the last 30 days (event 1001)",
+        "Unexpected shutdowns (Kernel-Power event 41)",
+        "The discriminator: a 41 with no matching 1001 means power loss or hard hang, not a blue screen",
+        "Crash dump inventory (minidumps, live kernel reports, full memory dump)"
+      ],
+      "fixesAvailable": [],
+      "noFixesNote": "Diagnosis-only by design, and honest about how far the diagnosis actually goes. A bug check is a symptom whose fix depends on the stop code AND on the faulting module — and this probe supplies the first but NOT the second. What it reports is: the stop codes and their parameters from event 1001, the crash-versus-power-loss discriminator (a Kernel-Power 41 with no matching 1001 is a hard hang or a power event, not a blue screen), and an inventory of the dump files that exist. It does not open a single dump, so it cannot name the faulting driver; that requires WinDbg/kd with '!analyze -v' against C:\\Windows\\Minidump, or a run of the Microsoft-signed analysis tooling. There is deliberately no minidump-analyze repair, for two separate reasons: naming the module means shipping or downloading a debugger and symbol resolution, which is a large third-party surface for a fix FrameForge could not then apply anyway; and even with the module named, the action is 'roll back or update THAT driver', a decision about a specific piece of the user's hardware that belongs to the user. So the honest next steps from here are chosen from the evidence — driver rollback or update for the named device once you have identified it, verifier.exe to force the offender to surface, memtest for memory-shaped stop codes, or the disk ladder for storage-shaped ones — and FrameForge points at them rather than shipping a button that cannot know what to repair.",
+      "sources": [
+        "https://learn.microsoft.com/answers/questions/3899257/event-41-kernel-power-and-event-1001-bugcheck",
+        "https://learn.microsoft.com/windows-hardware/drivers/debugger/"
+      ]
+    },
+    {
+      "id": "disk-space",
+      "name": "Disk space",
+      "summary": "Checks free space on every fixed volume against thresholds where Windows itself starts failing.",
+      "whatWeCheck": [
+        "Free space percentage per fixed volume",
+        "Warning under 15% free; critical under 10% free, or under 20 GB on the system drive (where updates start failing)",
+        "Deep scan only: DISM component-store analysis, parsing 'Component Store Cleanup Recommended' (admin, read-only)"
+      ],
+      "fixesAvailable": ["temp-clean", "component-cleanup", "component-cleanup-resetbase"],
+      "noFixesNote": "There is no disk-cleanup-run repair, and the real reason is not that cleanmgr cannot be automated — it can. WinUtil uses the documented silent preset 'cleanmgr /d C: /VERYLOWDISK', which needs no interactive /sageset pass at all; the other scriptable route, /sagerun:n, does require an interactive /sageset:n pass first to choose the categories. So the objection is not automatability, it is that /VERYLOWDISK is a fixed, non-negotiable category list chosen by Microsoft for an out-of-space emergency: it clears every user's Recycle Bin, Downloaded Program Files, thumbnail and delivery-optimisation caches, and previous-installation leftovers including C:\\Windows.old — which is the rollback for a Windows upgrade or a FrameForge in-place repair, and once it is gone 'Go back' is gone with it. FrameForge will not delete files the user never saw a list of, and it will not silently destroy a rollback path in a tool whose other half exists to protect one. Disk Cleanup and Storage Sense are both one click away in Settings, with the category list visible, which is where a decision like that belongs. Note what IS offered instead, because each is bounded and reversible-or-recoverable: temp-clean (Temp folders only, per file, in-use files skipped, byte counts reported) and component-cleanup / component-cleanup-resetbase (the WinSxS component store, with the /ResetBase consequence spelled out). There is no separate wu-cache-clear either — the Windows Update cache is renamed (not deleted) by wu-reset, which is where clearing it actually belongs.",
+      "sources": [
+        "https://learn.microsoft.com/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder"
+      ]
+    },
+    {
+      "id": "boot",
+      "name": "Boot performance",
+      "summary": "Reads measured boot times from the last 10 boots and names what slowed them down.",
+      "whatWeCheck": [
+        "Boot duration in milliseconds for the last 10 boots (Diagnostics-Performance event 100)",
+        "Boot degradation events naming the offending app, driver, or service (events 101-110)",
+        "Fast Startup availability and on/off state"
+      ],
+      "fixesAvailable": [],
+      "noFixesNote": "Diagnosis-only by design. Events 101-110 name the specific app, driver, or service that slowed the boot, and the fix is to deal with that named offender — not to shotgun a startup list or flip Fast Startup, which is a placebo for most slow boots and breaks dual-boot and full-shutdown behaviour when it is on. FrameForge names the offender and the measured boot times in milliseconds, and leaves the decision with the user.",
+      "sources": [
+        "https://learn.microsoft.com/windows-hardware/test/wpt/optimizing-performance-and-responsiveness"
+      ]
+    },
+    {
+      "id": "audio",
+      "name": "Audio",
+      "summary": "Checks the two audio services and looks for audio devices stuck in a driver error state.",
+      "whatWeCheck": [
+        "Windows Audio and Audio Endpoint Builder service states",
+        "PnP audio devices reporting an error state (driver problem)",
+        "Sound device status via CIM (Win32_SoundDevice: Error/Degraded)"
+      ],
+      "fixesAvailable": ["audio-restart"],
+      "sources": [
+        "https://support.microsoft.com/windows/fix-sound-or-audio-problems-in-windows-73025246-b61c-40fb-671a-2535c7cd56c8"
+      ]
+    },
+    {
+      "id": "activation",
+      "name": "Windows activation",
+      "summary": "Reads the Windows license status directly from the licensing service.",
+      "whatWeCheck": [
+        "License status of the installed Windows product (licensed, grace period, or notification state)"
+      ],
+      "performanceNote": "Known slow probe: the Software Licensing WMI provider takes several seconds to answer even with a server-side narrowed query — expect this category to dominate scan time.",
+      "fixesAvailable": ["activation-retry"],
+      "sources": [
+        "https://support.microsoft.com/windows/activate-windows-c39005d4-95ee-b91e-b399-2820fda32227"
+      ]
+    }
+  ]
+}

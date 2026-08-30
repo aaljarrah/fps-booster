@@ -1,0 +1,277 @@
+﻿{
+  "id": "fresh-image-repair",
+  "title": "Reinstall Windows over itself",
+  "tagline": "Replace every system file with a fresh copy of Windows while keeping your files, apps, and settings. The heaviest repair FrameForge offers - and the most honest about it.",
+  "engine": "engine/image.ps1",
+  "doctrine": [
+    "Detect before fixing; the same read-only probes verify after (health.ps1 system-files).",
+    "This flow is a guided, consent-gated handoff to Microsoft's own setup.exe - never silent automation.",
+    "Every command shown here is exactly what runs. Nothing else runs."
+  ],
+  "matchingRule": {
+    "summary": "The install media must match this exact machine or Windows Setup silently refuses.",
+    "requirements": [
+      {
+        "field": "edition",
+        "rule": "Home needs Home media, Pro needs Pro (the consumer multi-edition ISO covers both); Enterprise needs Enterprise media from its own license channel."
+      },
+      {
+        "field": "language",
+        "rule": "Strict since Windows 11 22H2: the media language must exactly equal the system default UI language. Even en-US vs en-GB fails, silently (0xC1900204)."
+      },
+      {
+        "field": "build",
+        "rule": "Media must be the same build as installed, or newer. You cannot repair-downgrade; older media is refused outright."
+      },
+      {
+        "field": "architecture",
+        "rule": "x64 media for x64 Windows, arm64 for arm64."
+      }
+    ],
+    "detectAction": "detect"
+  },
+  "acquisitionLadderNote": "Read 'rank' as a preference order, not as three buttons. Exactly ONE rung is executed by the engine: rung 1 (Fido) has an engine action, and it is consent-gated. Rungs 2 and 3 are things YOU do — FrameForge shows the Media Creation Tool command line and opens Microsoft's download page, and there is no acquire-mct action because there is no engine code that downloads or launches MediaCreationTool.exe. Every rung has a rungKind field saying which it is, and rungs FrameForge does not execute carry engineAction:null rather than a plausible-looking string. What FrameForge does do for every rung is the same thing: once you have the ISO, 'validate' reads it and says whether it can repair this exact machine.",
+  "acquisitionLadder": [
+    {
+      "id": "fido",
+      "rank": 1,
+      "rungKind": "engine-action",
+      "name": "Automatic (Fido)",
+      "action": "acquire-url",
+      "engineAction": "acquire-url",
+      "engineDoes": "Fetches the Fido script, runs it out-of-process, and returns a Microsoft download URL. Consent-gated (-ConsentRunFido). The ISO download itself is a separate action ('download').",
+      "nature": "Fido is an open-source script (pbatard/Fido, GPLv3 - the same one inside Rufus) that fetches Microsoft's OWN download links: it asks the microsoft.com download page's web API for a direct, time-limited (~24 h) URL and the ISO comes straight from Microsoft's CDN. Nobody redistributes Windows here.",
+      "honestCaveat": "It works by presenting a non-Windows browser identity to Microsoft's page (Windows visitors are redirected to the Media Creation Tool instead). Microsoft has tolerated this for years, but since 2025 its Sentinel anti-abuse layer sometimes IP-bans scripted requests (error 715-123130). If that happens, FrameForge automatically suggests the next rung.",
+      "safety": "The script is fetched over HTTPS from the official pbatard/Fido GitHub release only, it is checked to actually look like the Fido script before it is run (a CDN error page is refused, not executed), it runs in a separate process so its GPLv3 code never links into FrameForge, and the URL it returns is refused unless it is https:// on a microsoft.com host.",
+      "downloadAction": "download",
+      "verify": "After download, the SHA-256 is computed and shown; compare it with the hash list Microsoft publishes on the download page.",
+      "honestLimitsOfThatSafety": [
+        "The SHA-256 of the fetched script is COMPUTED AND SHOWN, not compared against a pinned known-good value. Fido publishes a new script with every release, so a hard-coded hash would break this feature on the next release rather than protect anyone. Pass -FidoSha256 <hash> to require an exact script; on a mismatch FrameForge refuses to run it AND deletes the rejected download. The file is fetched to a temporary name and only renamed to data/state/tools/Fido.ps1 once the hash and shape checks have both passed, so a rejected script is never left lying in the tools folder and can never overwrite a copy that was previously good.",
+        "If the official release asset cannot be fetched, the fallback is the tip of the repository's master branch - a moving target, not a signed release. It is only ever used as a fallback, and the result always reports which source was actually used.",
+        "The script is not code-signed, and FrameForge does not audit its contents.",
+        "The ISO's own SHA-256 is shown after download, but FrameForge cannot compare it for you: Microsoft publishes those hashes only on the download page itself. That comparison is the one that matters and it is yours to make."
+      ],
+      "consent": "Fetching and running this third-party script is consent-gated exactly like the repair itself: FrameForge shows what it would download and run, and does neither until you agree (-ConsentRunFido). Skipping this rung costs you nothing but a few clicks - the Media Creation Tool and manual paths download only Microsoft's own bits."
+    },
+    {
+      "id": "mct",
+      "rank": 2,
+      "rungKind": "guided-manual",
+      "name": "Media Creation Tool (you download and run it)",
+      "engineAction": null,
+      "engineDoes": "Nothing. There is no acquire-mct action: FrameForge does not download MediaCreationTool.exe and does not launch it. All it provides is the command line below, pre-filled with this machine's edition and language, for you to run yourself.",
+      "nature": "Microsoft's own first-party tool. You get it from Microsoft's download page and run it yourself; the command line below is pre-filled for this machine (edition, language, x64) so you can paste it instead of clicking through the options. It uses Microsoft's update delivery channel and is never IP-banned - it is Microsoft's own suggested route when scripted downloads are rejected.",
+      "honestCaveat": "FrameForge does not run this for you - it hands you the command and stands back, so this rung is a copy-and-paste, not a button. And the tool is not fully automatic even then: the wizard window appears and you click through the last steps (choose 'ISO file'). The /Eula Accept in the command line accepts the TOOL's license terms - that is your decision to make when you run it, which is another reason FrameForge does not run it on your behalf. The media it produces carries install.esd, which works fine for both repair paths.",
+      "commandTemplate": "MediaCreationTool.exe /Eula Accept /Retail /MediaArch x64 /MediaLangCode {lang} /MediaEdition {edition}",
+      "whereToGetIt": "https://www.microsoft.com/software-download/windows11",
+      "thenWhat": "Save the ISO, then point FrameForge at it - the validate action checks it against this machine before anything uses it."
+    },
+    {
+      "id": "manual",
+      "rank": 3,
+      "rungKind": "guided-manual",
+      "name": "I already have an ISO / download it myself",
+      "engineAction": null,
+      "engineDoes": "Nothing but open the page. FrameForge opens microsoft.com/software-download/windows11 in your browser; the downloading is yours. (Once you have the file, 'validate' is a real engine action that reads it.)",
+      "nature": "You download the 'multi-edition ISO for x64 devices' in your system language from Microsoft directly and point FrameForge at the file. 100% first-party, zero automation.",
+      "honestCaveat": "Pick the language that exactly matches your system default UI language - FrameForge's validate step will check the file before anything uses it.",
+      "url": "https://www.microsoft.com/software-download/windows11",
+      "validateAction": "validate"
+    },
+    {
+      "id": "uupdump",
+      "rank": null,
+      "rungKind": "not-offered",
+      "name": "UUP dump (not offered)",
+      "engineAction": null,
+      "engineDoes": "Nothing, deliberately. There is no action and no button.",
+      "nature": "Excluded by design. It repurposes Microsoft's update channel through an unaffiliated third-party site and assembles the ISO locally - the greyest option in terms-of-service terms, and inappropriate as a consumer default. Documented here for honesty, not as a button."
+    }
+  ],
+  "steps": [
+    {
+      "id": "detect",
+      "action": "detect",
+      "title": "Read this machine's identity",
+      "copy": "Edition, language, build, and architecture decide which ISO can repair this PC. Also checks the safety rails: free disk space, AC power, BitLocker recovery-key status, and pending restarts.",
+      "readOnly": true,
+      "adminRequired": false
+    },
+    {
+      "id": "acquire",
+      "action": "acquire-url",
+      "title": "Get matching install media",
+      "copy": "Three ways, most automatic first. Every path ends in an official Microsoft ISO - FrameForge never downloads Windows from anywhere else.",
+      "readOnly": false,
+      "writes": "Only data/state/tools/ (the fetched Fido script) and wherever you save the ISO.",
+      "adminRequired": false
+    },
+    {
+      "id": "validate",
+      "action": "validate",
+      "title": "Check the media fits this PC",
+      "copy": "Mounts the ISO, reads every Windows image inside it, and gives a plain verdict: compatible or not, and exactly why. An incompatible ISO is refused before it can waste an hour of your time - including the honest case where the ISO is simply older than your Windows and cannot help at all.",
+      "readOnly": true,
+      "adminRequired": true,
+      "adminNote": "Reading image metadata uses the DISM API, which needs elevation.",
+      "readOnlyNote": "Read-only with respect to Windows, your files, and your settings: nothing is installed, configured, or deleted. It is not literally side-effect-free, and saying so would be dishonest - it mounts the ISO as a temporary drive letter (Mount-DiskImage) to read the image metadata and dismounts it again (Dismount-DiskImage) when it is done. If the ISO was already mounted before FrameForge touched it, FrameForge leaves it mounted."
+    },
+    {
+      "id": "lighter-rung",
+      "action": "dism-source-repair",
+      "title": "Try the lighter repair first",
+      "copy": "Before reinstalling anything: the same ISO can serve as an offline parts depot for DISM to rebuild the Windows component store (/RestoreHealth /Source ... /LimitAccess). No reboot, apps untouched, typically 5-20 minutes. If health checks come back clean afterwards, you are done and the full reinstall never happens.",
+      "readOnly": false,
+      "adminRequired": true,
+      "dryRunAvailable": true,
+      "followUp": {
+        "engine": "repair.ps1",
+        "catalogId": "sfc-scannow",
+        "copy": "SFC then repairs the live system files from the freshly repaired store."
+      }
+    },
+    {
+      "id": "consent",
+      "action": "consent",
+      "title": "Your decision",
+      "copy": "FrameForge shows the exact setup.exe commands and the full consent contract below, BEFORE anything runs. Nothing that passes '/eula accept' starts until you explicitly agree here - and that includes the pre-flight compatibility scan on the next step, which is Windows Setup running its own dress rehearsal and will not run unattended without that switch. This is the one step FrameForge cannot and will not undo for you - Windows keeps its own rollback instead.",
+      "consentContract": {
+        "eulaConsent": "Two commands pass '/eula accept' to Windows Setup: the pre-flight compatibility scan on the next step, and the repair install itself. Both mean accepting the Microsoft Software License Terms for this Windows version. FrameForge does not accept them for you - this checkbox is that acceptance, and it is collected here, before the pre-flight scan, because that is when acceptance first takes effect.",
+        "whatIsPreserved": [
+          "Your user accounts and profiles",
+          "Your personal files",
+          "Installed desktop and Store apps",
+          "Most settings and current drivers",
+          "Windows activation"
+        ],
+        "whatIsReset": [
+          "Every system binary and the Windows component store (that is the repair)",
+          "Some defaults may reset (e.g. default apps)",
+          "Hand-patched system files and custom services",
+          "Some third-party shell extensions may need reinstalling"
+        ],
+        "duration": "Expect 30-90 minutes total on this class of hardware, with the PC unusable for part of it.",
+        "reboots": "2-3 restarts. The first one happens only when you choose - FrameForge passes /noreboot so setup waits for you.",
+        "rollback": "If anything fails, setup rolls back automatically to your current Windows. The previous OS is also kept in C:\\Windows.old with 'Go back' available for about 10 days.",
+        "bitlocker": "If this drive is BitLocker-encrypted, confirm you can access your recovery key BEFORE starting (https://aka.ms/myrecoverykey). Setup normally suspends and resumes BitLocker itself, but a recovery prompt after a reboot is possible, and without the key that means being locked out. FrameForge can optionally suspend BitLocker for the restarts (it re-arms automatically after 3 reboots).",
+        "whenAcceptanceTakesEffect": "At the pre-flight step - one step after this one. Pre-flight will not run its compatibility scan without this acceptance (it refuses and asks for it), and the repair will not launch without an explicit confirmation on top.",
+        "commandsCovered": [
+          "Pre-flight compatibility scan:  setup.exe /auto upgrade /quiet /eula accept /compat scanonly /noreboot",
+          "The repair install:             setup.exe /auto upgrade /eula accept /compat ignorewarning /migratedrivers all /dynamicupdate NoDrivers /showoobe none /copylogs <dir> /noreboot"
+        ],
+        "whatThisCheckboxDoesNotDo": "Accepting here does not start anything. The repair still requires a separate, explicit confirmation, and pre-flight has to come back green first."
+      },
+      "readOnly": true,
+      "adminRequired": false
+    },
+    {
+      "id": "preflight",
+      "action": "preflight",
+      "title": "Pre-flight check",
+      "copy": "Re-validates the media, checks every safety rail, then asks Windows Setup itself to run its full compatibility scan (/compat scanonly) - a real dress rehearsal that changes nothing. Green means setup itself has agreed it can do this upgrade. Because the scan is Windows Setup, it passes '/eula accept', so it only runs once you have accepted on the previous step; without that it refuses and says so rather than accepting on your behalf.",
+      "readOnly": false,
+      "writesNote": "The compat scan writes setup logs and briefly works the CPU and disk; it does not modify Windows. It does pass '/eula accept' - which is why consent is collected before this step, not after it.",
+      "adminRequired": true,
+      "dryRunAvailable": true,
+      "requiresEulaConsent": true
+    },
+    {
+      "id": "verify",
+      "action": "verify",
+      "title": "Prove it worked",
+      "copy": "After the final restart: FrameForge compares the OS build against the record it kept at launch, reads Windows Setup's own state, PARSES SetupDiag's results and names the cause it found, and re-runs the same read-only health probes that found the problem. 'It did not work' is a first-class result here - if setup rolled back, FrameForge says so, names the failure profile and the driver SetupDiag blamed, and points at the logs. It does not congratulate you.",
+      "youMustRunThisYourself": "FrameForge does NOT run this check for you after the restarts, and there is no scheduled task or RunOnce entry waiting to. Come back and press Verify (or run 'image.ps1 -Action verify') after the FINAL restart - setup does 2-3, and a verdict of 'in-progress' means there are more to go.",
+      "whyNotAutomatic": "Registering a post-reboot RunOnce entry or a scheduled task means installing a standing change on the machine as a side effect of pressing 'repair' - one that outlives the repair, and that sits there waiting even if setup never completes. A tool whose whole argument is that it captures state and puts things back does not get to quietly leave a startup hook behind. The engine's verify result carries the exact RunOnce command under scheduling.ifYouWantItAutomatic, so you can add it yourself and remove it yourself.",
+      "setupDiagNote": "Both places modern setup writes its diagnosis are read: %WinDir%\\Logs\\SetupDiag\\SetupDiagResults.xml and HKLM\\SYSTEM\\Setup\\SetupDiag\\Results. When several failures are logged the LAST is reported as the likely fatal one (the earlier ones are usually consequences), and all of them are listed in order so you can judge for yourself. If the results exist but cannot be read, that is said plainly instead of a cause being invented.",
+      "readOnly": true,
+      "adminRequired": false
+    }
+  ],
+  "deliberatelyNotDone": [
+    {
+      "id": "acquire-mct",
+      "what": "An engine action that downloads and launches the Media Creation Tool.",
+      "why": "It would mean downloading an executable from Microsoft and running it on the user's machine on their behalf - a third download-and-execute path, on top of Fido, for a tool whose whole remaining value is that the user drives its wizard by hand anyway. The acquisition ladder now says plainly that rung 2 is a copy-and-paste, and the command line is pre-filled. An honest label beats a button that pretends the engine is doing something it is not."
+    },
+    {
+      "id": "post-reboot-verify-scheduling",
+      "what": "Automatically registering a RunOnce entry or scheduled task at launch so the post-repair verify runs itself after the final restart (fresh-image-repair.md section 6 step 8).",
+      "why": "It installs a persistent change on the machine as a side effect of a repair, and one that survives if the repair does not. FrameForge documents the manual step instead and hands over the exact RunOnce command for anyone who wants it - see the verify step's youMustRunThisYourself and the engine's scheduling block."
+    },
+    {
+      "id": "setupdiag-download",
+      "what": "Downloading SetupDiag.exe and running it when no results exist.",
+      "why": "Modern Windows Setup already runs SetupDiag itself on failure and writes the results FrameForge now parses, so the download would only cover the case where setup left nothing at all. The link is surfaced instead (setupDiag.absentNote in the verify result) rather than adding another download-and-execute path for a rare case."
+    }
+  ],
+  "risks": [
+    {
+      "id": "time",
+      "copy": "This takes 30-90 minutes and 2-3 restarts. Save your work; setup will eventually close everything."
+    },
+    {
+      "id": "rollback-cost",
+      "copy": "Worst common outcome is time lost plus an automatic rollback - a failed upgrade rarely leaves the machine unbootable."
+    },
+    {
+      "id": "driver-rollback",
+      "copy": "The classic failure family (0xC1900101) is a driver crashing mid-upgrade, often antivirus filter drivers or old storage/vendor utilities. FrameForge keeps your current drivers (/migratedrivers all) and blocks setup from swapping in older ones (/dynamicupdate NoDrivers)."
+    },
+    {
+      "id": "bitlocker-lockout",
+      "copy": "A BitLocker recovery prompt without access to the recovery key means being locked out of the drive. That is why the recovery-key confirmation is a hard gate, not a tip."
+    },
+    {
+      "id": "windows-old-space",
+      "copy": "The rollback copy in C:\\Windows.old temporarily costs tens of GB; Windows cleans it up after ~10 days. That is part of why 30 GB free is required."
+    }
+  ],
+  "ledger": "data/state/image-repair-ledger.json",
+  "setupLogs": "data/state/setup-logs",
+  "sources": [
+    {
+      "title": "Windows Setup Command-Line Options - Microsoft Learn",
+      "url": "https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options?view=windows-11"
+    },
+    {
+      "title": "pbatard/Fido - official repository (mechanism, CLI options, GPLv3)",
+      "url": "https://github.com/pbatard/Fido"
+    },
+    {
+      "title": "Repair-WindowsImage (DISM PowerShell) - Microsoft Learn",
+      "url": "https://learn.microsoft.com/en-us/powershell/module/dism/repair-windowsimage?view=windowsserver2025-ps"
+    },
+    {
+      "title": "SetupDiag - Microsoft Learn",
+      "url": "https://learn.microsoft.com/en-us/windows/deployment/upgrade/setupdiag"
+    },
+    {
+      "title": "Repair Install Windows 11 with an In-place Upgrade - ElevenForum",
+      "url": "https://www.elevenforum.com/t/repair-install-windows-11-with-an-in-place-upgrade.418/"
+    },
+    {
+      "title": "Using DISM and SFC to Check and Repair Windows System Files - WOSHub",
+      "url": "https://woshub.com/dism-cleanup-image-restorehealth/"
+    },
+    {
+      "title": "Microsoft blocks scripted ISO downloads (error 715-123130) - winget-cli issue #6257",
+      "url": "https://github.com/microsoft/winget-cli/issues/6257"
+    },
+    {
+      "title": "Full research dossier for this flow",
+      "url": "docs/research/fresh-image-repair.md"
+    }
+  ],
+  "flowNote": "Step order is load-bearing, not cosmetic: consent comes BEFORE pre-flight because pre-flight is the first thing that passes '/eula accept' to Windows Setup. The engine enforces the same order - 'image.ps1 -Action preflight' refuses without -AcceptEula, and 'image.ps1 -Action launch' refuses without -Confirm. Neither switch is ever passed unless the user accepted the contract in the UI.",
+  "engineActions": {
+    "detect": "Read-only machine identity + safety rails.",
+    "consent": "Read-only: returns the consent contract and the exact commands it covers.",
+    "validate": "Mounts the ISO to read image metadata, dismounts it, returns a compatibility verdict.",
+    "acquire-url": "Consent-gated (-ConsentRunFido): fetches and runs Fido out-of-process to get a Microsoft ISO URL.",
+    "download": "BITS transfer of a given HTTPS URL + SHA-256 of the result.",
+    "dism-source-repair": "The lighter rung: the ISO as an offline DISM /RestoreHealth source. Admin, -DryRun available.",
+    "preflight": "Safety rails + Windows Setup /compat scanonly. Admin, requires -AcceptEula.",
+    "launch": "Returns the contract; starts setup.exe only with -Confirm, admin, and green rails.",
+    "verify": "Read-only post-repair check against the ledger written at launch. Parses SetupDiag's results (XML + registry) and names the failure profile, driver, device, and error codes. Must be run by hand after the final restart - nothing schedules it."
+  }
+}
