@@ -12,6 +12,10 @@
     "summary": "The install media must match this exact machine or Windows Setup silently refuses.",
     "requirements": [
       {
+        "field": "generation",
+        "rule": "Rule zero: the media must be the SAME Windows as the one installed. A Windows 11 ISO satisfies every other rule on a Windows 10 PC (the edition string matches, the language matches, the architecture matches, and build 26200 counts as 'newer' than 19045) and would turn 'repair my Windows' into a major-version upgrade. FrameForge refuses that outright: a repair must not change which Windows you are running."
+      },
+      {
         "field": "edition",
         "rule": "Home needs Home media, Pro needs Pro (the consumer multi-edition ISO covers both); Enterprise needs Enterprise media from its own license channel."
       },
@@ -21,14 +25,56 @@
       },
       {
         "field": "build",
-        "rule": "Media must be the same build as installed, or newer. You cannot repair-downgrade; older media is refused outright."
+        "rule": "Media must be the same build as installed, or newer. You cannot repair-downgrade; older media is refused outright. NEWER media of the same Windows generation (say 23H2 media on a 23H2 machine that is really 22631 against a 26200 ISO) is a FEATURE UPDATE rather than a repair: your Windows version changes. That is a different action from the one this flow's consent contract describes, so it is refused by default and needs the explicit -AllowFeatureUpdate opt-in, after which the consent contract states the version change as its first line and asks for a second, separate acceptance."
       },
       {
         "field": "architecture",
-        "rule": "x64 media for x64 Windows, arm64 for arm64."
+        "rule": "x64 media for x64 Windows, arm64 for arm64. The architecture compared is the OPERATING SYSTEM's, resolved from PROCESSOR_ARCHITEW6432 / .NET OSArchitecture / Win32_Processor - not the architecture of the process FrameForge happens to be running in, which reads 'x86' under a 32-bit host on a perfectly good x64 machine."
       }
     ],
+    "threeOutcomes": "Every rule has three possible outcomes, not two: passed, failed, or NOT EVALUATED. If the system default UI language, the installed build number, or the architecture could not be read, the rule that depends on it is reported with pass:null and listed under verdict.undetermined, and verdict.determined goes false. compatible:false then means 'not proven compatible', not 'proven incompatible' - FrameForge does not claim a mismatch it never measured, and it also does not run a repair on an unproven match.",
     "detectAction": "detect"
+  },
+  "portability": {
+    "summary": "Every environment-dependent fact this flow relies on is read through a documented ladder: structured API first, locale-independent codes next, honest unknown last. Where a rung can only be a text parse, it is the FIRST rung and there are locale-independent rungs beneath it.",
+    "ladders": [
+      {
+        "fact": "System default UI language",
+        "rungs": ["dism /English /Online /Get-Intl (English labels forced, so the parse does not depend on the system language)", "HKLM Nls\\Language InstallLanguage (hex LCID)", "[CultureInfo]::InstalledUICulture"],
+        "whenAllFail": "The language rule is reported as NOT EVALUATED. It is never reported as a mismatch against an empty string, which used to refuse correct media."
+      },
+      {
+        "fact": "Product name shown on this page",
+        "rungs": ["Win32_OperatingSystem.Caption", "synthesised from the build number and EditionID", "the registry ProductName value, tagged as known-stale"],
+        "why": "HKLM\\...\\CurrentVersion\\ProductName was never updated for Windows 11: it still reads 'Windows 10 Pro' on every Windows 11 machine, and this page used to print that at the consent gate for a full OS reinstall."
+      },
+      {
+        "fact": "Installed build number",
+        "rungs": ["registry CurrentBuildNumber", "Win32_OperatingSystem.BuildNumber"],
+        "whenAllFail": "The build rule says the PC's own build could not be read and states plainly that the media is not at fault."
+      },
+      {
+        "fact": "OS architecture",
+        "rungs": ["PROCESSOR_ARCHITEW6432 (the real OS arch under WOW64)", "[RuntimeInformation]::OSArchitecture", "Win32_Processor.Architecture", "PROCESSOR_ARCHITECTURE, labelled as process-level"],
+        "whenAllFail": "The architecture rule is NOT EVALUATED rather than failed."
+      },
+      {
+        "fact": "AC power",
+        "rungs": ["WinForms PowerStatus (only 'Online'/'Offline' counts as an answer)", "Win32_Battery: no battery instances means no system battery, which means line power"],
+        "whenAllFail": "The rail says 'AC power state could not be determined', never 'Not on AC power'. A desktop with no battery no longer gets told to plug itself in."
+      },
+      {
+        "fact": "Drive encryption (BitLocker / Device Encryption)",
+        "rungs": ["Get-BitLockerVolume, when the BitLocker module exists (Pro/Enterprise/Education only)", "Win32_EncryptableVolume in root\\cimv2\\security\\MicrosoftVolumeEncryption - the provider Device Encryption uses, and the one Home editions do have", "neither present: status 'unsupported'"],
+        "whenAllFail": "'unsupported' means this edition has no encryption management provider at all, so the drive cannot be BitLocker/Device-Encryption protected and the rail is satisfied. A denial while unelevated is reported as needs-admin, and an unread state stays UNKNOWN (red) rather than green. manage-bde is deliberately not parsed: its output is localized free text.",
+        "why": "Windows 11 Home ships without the BitLocker PowerShell module, so the old single-rung check reported a raw 'Get-BitLockerVolume is not recognized' error, the rail never turned green, and the entire in-place repair path was unreachable on roughly half of consumer installs - while Home machines on 24H2/25H2 are frequently Device-Encrypted, which is exactly when the rail matters."
+      },
+      {
+        "fact": "Access denied (image inventory, encryption state)",
+        "rungs": ["exception type", "CIM NativeErrorCode enum", "HRESULT/Win32 code", "PowerShell error category", "English message text, last and only as a hint"],
+        "why": "A localized 'Zugriff verweigert' never matched an English 'denied', so an access-denied inventory read used to be reported as 'could not read the install image inventory' - telling the user their ISO was unreadable when the real answer was 're-run elevated'."
+      }
+    ]
   },
   "acquisitionLadderNote": "Read 'rank' as a preference order, not as three buttons. Exactly ONE rung is executed by the engine: rung 1 (Fido) has an engine action, and it is consent-gated. Rungs 2 and 3 are things YOU do — FrameForge shows the Media Creation Tool command line and opens Microsoft's download page, and there is no acquire-mct action because there is no engine code that downloads or launches MediaCreationTool.exe. Every rung has a rungKind field saying which it is, and rungs FrameForge does not execute carry engineAction:null rather than a plausible-looking string. What FrameForge does do for every rung is the same thing: once you have the ISO, 'validate' reads it and says whether it can repair this exact machine.",
   "acquisitionLadder": [
@@ -45,8 +91,10 @@
       "safety": "The script is fetched over HTTPS from the official pbatard/Fido GitHub release only, it is checked to actually look like the Fido script before it is run (a CDN error page is refused, not executed), it runs in a separate process so its GPLv3 code never links into FrameForge, and the URL it returns is refused unless it is https:// on a microsoft.com host.",
       "downloadAction": "download",
       "verify": "After download, the SHA-256 is computed and shown; compare it with the hash list Microsoft publishes on the download page.",
+      "whatItAsksFor": "The request is built from THIS machine: the Windows generation (this rung refuses to run on a Windows 10 machine rather than fetching Windows 11 media for it), the edition, the architecture, and - importantly - the INSTALLED release by name (for example 25H2), so that a same-build repair is actually reachable. It used to ask for 'Latest' unconditionally, which meant a 23H2 machine was always handed 25H2 media and the same-build repair this page promises could never happen through the product's own recommended path.",
+      "versionChangeWarning": "If Microsoft cannot serve the installed release, one retry asks for the latest retail release and the result then carries a versionChange block: the ISO may be a NEWER Windows than the one installed, in which case running it in place is a feature update, not a repair. That warning belongs in front of the download, not after it. The exact build is established by 'validate' before anything is installed, and 'launch' refuses newer-build media unless the feature update is explicitly allowed and separately consented to.",
       "honestLimitsOfThatSafety": [
-        "The SHA-256 of the fetched script is COMPUTED AND SHOWN, not compared against a pinned known-good value. Fido publishes a new script with every release, so a hard-coded hash would break this feature on the next release rather than protect anyone. Pass -FidoSha256 <hash> to require an exact script; on a mismatch FrameForge refuses to run it AND deletes the rejected download. The file is fetched to a temporary name and only renamed to data/state/tools/Fido.ps1 once the hash and shape checks have both passed, so a rejected script is never left lying in the tools folder and can never overwrite a copy that was previously good.",
+        "The SHA-256 of the fetched script is COMPUTED AND SHOWN, not compared against a pinned known-good value. Fido publishes a new script with every release, so a hard-coded hash would break this feature on the next release rather than protect anyone. Pass -FidoSha256 <hash> to require an exact script; on a mismatch FrameForge refuses to run it AND deletes the rejected download. The file is fetched to a temporary name and only renamed to %LOCALAPPDATA%\\FrameForge\\state\\tools\\Fido.ps1 once the hash and shape checks have both passed, so a rejected script is never left lying in the tools folder and can never overwrite a copy that was previously good.",
         "If the official release asset cannot be fetched, the fallback is the tip of the repository's master branch - a moving target, not a signed release. It is only ever used as a fallback, and the result always reports which source was actually used.",
         "The script is not code-signed, and FrameForge does not audit its contents.",
         "The ISO's own SHA-256 is shown after download, but FrameForge cannot compare it for you: Microsoft publishes those hashes only on the download page itself. That comparison is the one that matters and it is yours to make."
@@ -62,7 +110,9 @@
       "engineDoes": "Nothing. There is no acquire-mct action: FrameForge does not download MediaCreationTool.exe and does not launch it. All it provides is the command line below, pre-filled with this machine's edition and language, for you to run yourself.",
       "nature": "Microsoft's own first-party tool. You get it from Microsoft's download page and run it yourself; the command line below is pre-filled for this machine (edition, language, x64) so you can paste it instead of clicking through the options. It uses Microsoft's update delivery channel and is never IP-banned - it is Microsoft's own suggested route when scripted downloads are rejected.",
       "honestCaveat": "FrameForge does not run this for you - it hands you the command and stands back, so this rung is a copy-and-paste, not a button. And the tool is not fully automatic even then: the wizard window appears and you click through the last steps (choose 'ISO file'). The /Eula Accept in the command line accepts the TOOL's license terms - that is your decision to make when you run it, which is another reason FrameForge does not run it on your behalf. The media it produces carries install.esd, which works fine for both repair paths.",
-      "commandTemplate": "MediaCreationTool.exe /Eula Accept /Retail /MediaArch x64 /MediaLangCode {lang} /MediaEdition {edition}",
+      "commandTemplate": "MediaCreationTool.exe /Eula Accept /Retail /MediaArch {arch} /MediaLangCode {lang} /MediaEdition \"{edition}\"",
+      "editionAndArchAreDerived": "{edition} comes from this machine's actual EditionID with its N suffix preserved (Professional N, Education N, Professional Workstation N, Home Single Language ...) and {arch} from the resolved OS architecture. The command used to hard-code 'Professional' and 'x64' for everything that was not Home, which handed N-edition users a command building media whose edition string FrameForge itself then refuses on the exact-match rule.",
+      "whenThisRungIsNotOffered": "The Media Creation Tool builds consumer editions only, and no ARM64 media at all. On an Enterprise, Enterprise LTSC, IoT Enterprise or Cloud edition, and on any ARM64 machine, this rung is removed rather than shown with a command that cannot work - the engine returns a 'mctUnavailable' explanation and, for licensed editions, a 'volumeLicense' rung naming the real channel (Microsoft 365 admin center / Volume Licensing Service Center / Azure Marketplace, and the LTSC channel for Enterprise LTSC), with the note that the media's edition string must match exactly.",
       "whereToGetIt": "https://www.microsoft.com/software-download/windows11",
       "thenWhat": "Save the ISO, then point FrameForge at it - the validate action checks it against this machine before anything uses it."
     },
@@ -94,6 +144,7 @@
       "action": "detect",
       "title": "Read this machine's identity",
       "copy": "Edition, language, build, and architecture decide which ISO can repair this PC. Also checks the safety rails: free disk space, AC power, BitLocker recovery-key status, and pending restarts.",
+      "honestUnknowns": "Each identity field carries where it came from (productNameSource, currentBuildSource, architectureSource, language.source) and each rail says whether it was actually measured: power.acKnown, rails.bitlockerKnown with rails.bitlockerBasis. A rail that could not be read is UNKNOWN and blocks the launch - it is never rendered as a measured 'no'.",
       "readOnly": true,
       "adminRequired": false
     },
@@ -103,7 +154,7 @@
       "title": "Get matching install media",
       "copy": "Three ways, most automatic first. Every path ends in an official Microsoft ISO - FrameForge never downloads Windows from anywhere else.",
       "readOnly": false,
-      "writes": "Only data/state/tools/ (the fetched Fido script) and wherever you save the ISO.",
+      "writes": "Only %LOCALAPPDATA%\\FrameForge\\state\\tools\\ (the fetched Fido script) and wherever you save the ISO.",
       "adminRequired": false
     },
     {
@@ -154,6 +205,7 @@
         "reboots": "2-3 restarts. The first one happens only when you choose - FrameForge passes /noreboot so setup waits for you.",
         "rollback": "If anything fails, setup rolls back automatically to your current Windows. The previous OS is also kept in C:\\Windows.old with 'Go back' available for about 10 days.",
         "bitlocker": "If this drive is BitLocker-encrypted, confirm you can access your recovery key BEFORE starting (https://aka.ms/myrecoverykey). Setup normally suspends and resumes BitLocker itself, but a recovery prompt after a reboot is possible, and without the key that means being locked out. FrameForge can optionally suspend BitLocker for the restarts (it re-arms automatically after 3 reboots).",
+        "versionChange": "The contract is generated from the media that was actually read, not from fixed text. If the ISO is a NEWER build than the installed Windows, the first line of 'what is reset' says so in those words - YOUR WINDOWS VERSION WILL CHANGE, from this version to that build, this is a feature update, not a same-version repair - and the contract sets isFeatureUpdate:true and requiresSecondConsent:true so a second, separately worded acceptance is required. A feature update also re-runs the OOBE-era default settings pass and its rollback window returns you to the OLD Windows version rather than to a repaired copy of the current one; both are stated. If no media has been read yet (the standalone consent action), isFeatureUpdate is null and the contract says plainly that this is not yet known - it never quietly claims 'same version'.",
         "whenAcceptanceTakesEffect": "At the pre-flight step - one step after this one. Pre-flight will not run its compatibility scan without this acceptance (it refuses and asks for it), and the repair will not launch without an explicit confirmation on top.",
         "commandsCovered": [
           "Pre-flight compatibility scan:  setup.exe /auto upgrade /quiet /eula accept /compat scanonly /noreboot",
@@ -222,12 +274,17 @@
       "copy": "A BitLocker recovery prompt without access to the recovery key means being locked out of the drive. That is why the recovery-key confirmation is a hard gate, not a tip."
     },
     {
+      "id": "version-change",
+      "copy": "Media that is newer than your installed build performs a FEATURE UPDATE: your Windows version changes, some OOBE-era defaults are re-applied, and 'Go back' returns you to the old version rather than to a repaired copy of the current one. FrameForge refuses that by default and requires an explicit opt-in plus a second consent, because it is not the action the repair contract describes. Windows 11 media on a Windows 10 machine - a major-version upgrade - is refused outright and cannot be opted into here at all."
+    },
+    {
       "id": "windows-old-space",
       "copy": "The rollback copy in C:\\Windows.old temporarily costs tens of GB; Windows cleans it up after ~10 days. That is part of why 30 GB free is required."
     }
   ],
-  "ledger": "data/state/image-repair-ledger.json",
-  "setupLogs": "data/state/setup-logs",
+  "stateLocationNote": "RUNTIME STATE LOCATION. The launch ledger, the copied setup logs and the fetched Fido script all live under %LOCALAPPDATA%\\FrameForge\\state - the same folder engine/engine.ps1 and engine/repair.ps1 use, and deliberately NOT inside the install tree. A per-machine install under %ProgramFiles%, a read-only or network copy, Controlled Folder Access, or a OneDrive Known-Folder-Move profile all make <install>\\data\\state unwritable, and the launch ledger is the only thing 'verify' can compare a post-upgrade machine against - without it there is no verdict after the restarts. A ledger written by an earlier version into the install tree is COPIED to the new location on first use and the original is left where it was; nothing is moved and nothing is deleted. If the ledger EXISTS but cannot be read, 'verify' reports verdict 'ledger-unreadable' with the reason, never 'no-ledger': \"nothing was launched\" is a claim about a file nobody could open.",
+  "ledger": "%LOCALAPPDATA%\\FrameForge\\state\\image-repair-ledger.json",
+  "setupLogs": "%LOCALAPPDATA%\\FrameForge\\state\\setup-logs",
   "sources": [
     {
       "title": "Windows Setup Command-Line Options - Microsoft Learn",
@@ -263,15 +320,16 @@
     }
   ],
   "flowNote": "Step order is load-bearing, not cosmetic: consent comes BEFORE pre-flight because pre-flight is the first thing that passes '/eula accept' to Windows Setup. The engine enforces the same order - 'image.ps1 -Action preflight' refuses without -AcceptEula, and 'image.ps1 -Action launch' refuses without -Confirm. Neither switch is ever passed unless the user accepted the contract in the UI.",
+  "refusalNote": "PLATFORM AND LANGUAGE-MODE REFUSALS. acquire-url, preflight and launch REFUSE with errorCode 'unsupported-os' and exit code 3 on anything that is not a Windows 11 client build (a Server SKU, Windows 10, or a machine whose build could not be read). Those three either start Windows Setup or fetch and execute third-party code, and an in-place upgrade is the least reversible thing this product does; detect, consent, validate, download, dism-source-repair and verify stay available so the machine can still be inspected. There is deliberately no override switch for this - unlike repair.ps1 this engine has no -Force. Separately, under WDAC/AppLocker ConstrainedLanguage the engine emits errorCode 'constrained-language' and exits 3, rather than dying with empty stdout as it used to.",
   "engineActions": {
     "detect": "Read-only machine identity + safety rails.",
     "consent": "Read-only: returns the consent contract and the exact commands it covers.",
-    "validate": "Mounts the ISO to read image metadata, dismounts it, returns a compatibility verdict.",
-    "acquire-url": "Consent-gated (-ConsentRunFido): fetches and runs Fido out-of-process to get a Microsoft ISO URL.",
+    "validate": "Mounts the ISO to read image metadata, dismounts it, returns a compatibility verdict with three outcomes per rule (pass / fail / not evaluated). -AllowFeatureUpdate opts in to media that is newer than the installed build.",
+    "acquire-url": "Consent-gated (-ConsentRunFido): fetches and runs Fido out-of-process to get a Microsoft ISO URL for THIS machine's generation, edition, architecture and installed release. Refuses rather than guessing when any of those could not be determined.",
     "download": "BITS transfer of a given HTTPS URL + SHA-256 of the result.",
     "dism-source-repair": "The lighter rung: the ISO as an offline DISM /RestoreHealth source. Admin, -DryRun available.",
     "preflight": "Safety rails + Windows Setup /compat scanonly. Admin, requires -AcceptEula.",
-    "launch": "Returns the contract; starts setup.exe only with -Confirm, admin, and green rails.",
+    "launch": "Returns the contract (generated from the media that was read, so a feature update says so); starts setup.exe only with -Confirm, admin, and green rails - and only for media that passed every matching rule, which for newer-build media additionally requires -AllowFeatureUpdate.",
     "verify": "Read-only post-repair check against the ledger written at launch. Parses SetupDiag's results (XML + registry) and names the failure profile, driver, device, and error codes. Must be run by hand after the final restart - nothing schedules it."
   }
 }

@@ -66,3 +66,31 @@ console output encoding), matching the pattern in `engine/_lib.ps1`.
   published Settings screenshots / WinUI Gallery are the reference).
 - Engine critics execute read-only probes for real, run apply paths only with `-DryRun`,
   and diff our fix implementations against WinUtil's actual source line-by-line.
+
+
+## Scope decision — 2026-08-30
+
+**English-language Windows is the supported target.** Localization work is out of scope by the
+owner's decision, taken after a portability campaign surfaced that several checks decided their
+verdict by matching English text from command output.
+
+What this changes, and what it deliberately does not:
+
+- Locale-specific hardening is no longer a release requirement. The structural improvements already
+  made (exit codes and typed cmdlet results preferred over text parsing, English parses demoted to a
+  documented last resort, an honest `unknown` when nothing can decide) are kept, because they are
+  better engineering on English machines too — a parse that fails for any reason now reports that it
+  could not tell, instead of guessing.
+- The portability defects that have nothing to do with language remain in scope and were fixed. Those
+  were the severe ones: the app being completely dead under a GPO-enforced AllSigned execution policy,
+  engines dying with zero output under ConstrainedLanguage (WDAC/AppLocker), a printing probe stating
+  "no stuck print jobs" after its API threw, an unreadable build number becoming `build 0`, a `[` in
+  the install path killing the entire repair engine, and an unreadable ledger reported as empty.
+- Review intensity was reduced from adversarial to pragmatic for the finalization pass. The
+  adversarial rounds had by then done their job: seven blind verdicts across the build phase and eight
+  across the portability campaign, each of which found real defects that reading the code had missed.
+
+The honest consequence to state in the product: FrameForge is validated on English Windows 11. On a
+localized install it will more often report that it could not determine something, rather than
+reporting something false — which is the correct failure direction, but it is a degraded experience
+and should be described that way rather than advertised as support.

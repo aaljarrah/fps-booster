@@ -1,0 +1,559 @@
+{
+  "schemaVersion": 1,
+  "note": "FrameForge VM test matrix. Every cell exists to KILL a specific assumption that the dev box (Windows 11 Pro 25H2, en-US, x64, non-domain, NVMe, unelevated) cannot falsify. A cell that kills no assumption does not belong here. Consumed by tools/vmtest/New-TestVm.ps1 (provisioning) and tools/vmtest/Invoke-VmMatrix.ps1 (execution).",
+  "doctrineNote": "The harness enforces docs/GAUNTLET.md rule 2 mechanically. The decisive assertion is 'fault-detected': the harness BREAKS a subsystem on purpose, confirms it is broken with its own locale-independent ground-truth probe, and then requires FrameForge's read-only probe to say so too. A FrameForge probe that reports 'ok' over a fault the harness knows it injected is recorded as outcome 'fail' with code 'false-pass' - the single worst bug class in this codebase, and the one that English text parsing produces on localized Windows. A probe that reports 'unknown' over the same fault is ALSO a fail, but a different code ('detect-unknown'), because 'could not determine' is honest and a false green tick is not.",
+  "groundTruthNote": "Fault scripts deliberately share NO code with the engine under test. They read service start values, registry blobs, file sizes, dirty-bit exit codes and Get-WindowsOptionalFeature state objects directly. If the fault scripts dot-sourced engine/_lib.ps1, a locale bug in the engine would be reproduced identically in the oracle and the whole matrix would agree with itself while being wrong.",
+
+  "defaults": {
+    "vmRoot": "D:\\ffvm",
+    "baseRoot": "D:\\ffvm\\base",
+    "diffRoot": "D:\\ffvm\\vhd",
+    "isoRoot": "D:\\ffvm\\iso",
+    "unattendRoot": "D:\\ffvm\\unattend",
+    "resultsRoot": "D:\\ffvm\\results",
+    "guestRoot": "C:\\ffvmtest",
+    "guestPayloadRoot": "C:\\ffvmtest\\ff",
+    "checkpointName": "clean",
+    "checkpointType": "Standard",
+    "vmGeneration": 2,
+    "processorCount": 4,
+    "memoryStartupBytes": 4294967296,
+    "memoryMinimumBytes": 2147483648,
+    "memoryMaximumBytes": 8589934592,
+    "dynamicMemory": true,
+    "osDiskBytes": 68719476736,
+    "secureBootTemplate": "MicrosoftWindows",
+    "vTpm": true,
+    "adminUser": "ffadmin",
+    "networkDefault": "none",
+    "externalSwitchName": null,
+    "checkpointTypeNote": "Standard (not Production). A Standard checkpoint captures guest MEMORY, so Restore-VMCheckpoint returns a RUNNING guest in about ten seconds with PowerShell Direct already up. A Production checkpoint would be application-consistent but would restore to a powered-off VM, adding a full boot to every one of the ~150 cell x repair iterations.",
+    "networkDefaultNote": "Cells are built with NO virtual switch attached. Two reasons: (1) determinism - a networked VM starts downloading cumulative updates, which rewrites SoftwareDistribution and the component store between the checkpoint and the assertion; (2) it proves the control channel is genuinely PowerShell Direct over the VMBus. Invoke-VmMatrix.ps1 hot-connects the adapter to defaults.externalSwitchName only for repairs whose plan entry sets requiresNetwork:true, and disconnects it afterwards."
+  },
+
+  "repairSets": {
+    "full": "all",
+    "smoke": [
+      "chkdsk-scan",
+      "spooler-clear-queue",
+      "store-services-enable",
+      "ntp-resync",
+      "enable-directplay"
+    ],
+    "locale-critical": [
+      "sfc-scannow",
+      "dism-restorehealth",
+      "chkdsk-scan",
+      "chkdsk-spotfix",
+      "chkdsk-full-repair",
+      "wu-reset",
+      "ntp-resync",
+      "activation-retry",
+      "store-reregister",
+      "search-index-rebuild",
+      "spooler-clear-queue",
+      "temp-clean",
+      "enable-netfx3"
+    ],
+    "localeCriticalNote": "Exactly the repairs whose verdict passes through one of the confirmed English-text parse sites (health.ps1 sfc/fsutil/DISM-AnalyzeComponentStore/powercfg, repair.ps1 w32tm/sfc), plus the ones whose console output is emitted by a localized Win32 tool at all. These run on EVERY locale cell even when the rest of the matrix is skipped for time."
+  },
+
+  "cells": [
+    {
+      "id": "pro-25h2-en-us-x64",
+      "role": "control",
+      "vmName": "ff-pro-25h2-en-us-x64",
+      "baseKey": "25h2-en-us-pro-x64",
+      "enabled": true,
+      "os": { "product": "Windows 11 Pro", "release": "25H2", "expectedBuild": 26200, "architecture": "x64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_25H2_EnglishInternational_x64.iso",
+        "source": "consumer-multi-edition",
+        "sourceDetail": "microsoft.com/software-download/windows11 (Download Windows 11 Disk Image) or the same ISO produced by data/state/tools/Fido.ps1, which is what image.ps1 already uses to acquire media.",
+        "imageName": "Windows 11 Pro",
+        "editionIndex": 6,
+        "language": "en-US",
+        "architecture": "amd64",
+        "sha256": null,
+        "editionIndexNote": "editionIndex is recorded for reference and for `dism /Get-WimInfo` cross-checks; the unattend selects the edition by /IMAGE/NAME string (imageName), which does not shift between ISO revisions the way the index does. VERIFY imageName against `dism /Get-WimInfo /WimFile:<mount>\\sources\\install.wim` before the first base build - on some ISOs install.wim is install.esd, and New-TestVm.ps1 reports which one it found."
+      },
+      "unattend": "unattend/Win11-x64-en-US.xml",
+      "computerName": "FF-CTRL",
+      "conditioning": [],
+      "repairSet": "full",
+      "network": "none",
+      "assumptionsKilled": [
+        "NONE - and that is the point. This cell reproduces the dev box as a VM, so it is the harness's own control. A failure here means the harness, the fault script, or the engine is broken; it can never be blamed on the platform.",
+        "It is also the only cell where a repair has EVER been executed non-DryRun, which is the entire validation gap this harness closes."
+      ],
+      "notes": "Runs the complete plan. Its clean-baseline deep scan is the reference document that Invoke-VmMatrix.ps1 diffs every other cell's scan against (locale-divergence.json)."
+    },
+
+    {
+      "id": "home-24h2-en-us-x64",
+      "role": "edition",
+      "vmName": "ff-home-24h2-en-us-x64",
+      "baseKey": "24h2-en-us-home-x64",
+      "enabled": true,
+      "os": { "product": "Windows 11 Home", "release": "24H2", "expectedBuild": 26100, "architecture": "x64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_24H2_EnglishInternational_x64.iso",
+        "source": "consumer-multi-edition",
+        "sourceDetail": "The consumer multi-edition ISO is the ONLY legitimate source of Home. The Evaluation Center never publishes Home - it publishes Enterprise. A harness that tests 'Home' on an Enterprise eval ISO is testing nothing.",
+        "imageName": "Windows 11 Home",
+        "editionIndex": 1,
+        "language": "en-US",
+        "architecture": "amd64",
+        "sha256": null
+      },
+      "unattend": "unattend/Win11-x64-en-US.xml",
+      "computerName": "FF-HOME",
+      "conditioning": [],
+      "repairSet": "full",
+      "network": "none",
+      "assumptionsKilled": [
+        "'Every Windows 11 has gpedit.msc / secpol.msc / the Local Group Policy Editor.' Home does not. Anything that reaches for a Local Group Policy object rather than the HKLM\\SOFTWARE\\Policies registry values must fail here.",
+        "'Get-FFPolicySnapshot / Get-WuManagementState behave the same everywhere.' Home cannot be domain-joined and has no Local GPO store, so the managed/unmanaged branch takes a path the dev box never takes.",
+        "'BitLocker cmdlets exist.' Home ships Device Encryption, not BitLocker; Get-BitLockerVolume and manage-bde are absent or reduced. image.ps1's Get-FFBitLockerStatus must degrade to 'could not determine', not to 'not encrypted'.",
+        "'The edition string is Pro.' image.ps1 edition matching, the Fido/MCT edition ladder, and repairs.json's edition assumptions all get their first non-Pro exposure here.",
+        "'Hyper-V / Windows Sandbox / RSAT are available.' None are, on Home."
+      ],
+      "notes": "Same build family as the 24H2 locale cells on purpose: any divergence between this cell and pro-24h2-de-de-x64 is edition OR locale, never build."
+    },
+
+    {
+      "id": "pro-23h2-en-us-x64",
+      "role": "build-gate",
+      "vmName": "ff-pro-23h2-en-us-x64",
+      "baseKey": "23h2-en-us-pro-x64",
+      "enabled": true,
+      "os": { "product": "Windows 11 Pro", "release": "23H2", "expectedBuild": 22631, "architecture": "x64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_23H2_EnglishInternational_x64.iso",
+        "source": "consumer-multi-edition-archived",
+        "sourceDetail": "Microsoft's download page serves only the current release. 23H2 media comes from Fido (which enumerates prior releases), from a Visual Studio subscription, or from the Evaluation Center's archived Enterprise 23H2 ISO. If only the Enterprise eval ISO is obtainable, set imageName to 'Windows 11 Enterprise Evaluation' and record that this cell is then testing Enterprise-23H2, NOT Pro-23H2 - and say so in the results, rather than labelling it Pro.",
+        "imageName": "Windows 11 Pro",
+        "editionIndex": 6,
+        "language": "en-US",
+        "architecture": "amd64",
+        "sha256": null
+      },
+      "unattend": "unattend/Win11-x64-en-US.xml",
+      "computerName": "FF-23H2",
+      "conditioning": [],
+      "repairSet": "full",
+      "network": "none",
+      "assumptionsKilled": [
+        "'systemreset.exe is gone.' On 23H2 it still exists. Any rung of the repair ladder that decides 'Reset this PC is unavailable' by probing for the binary, or that gates on build >= 26100, gets its opposite branch exercised here - and repairs.json's minBuild/maxBuild/generation gates get their first real build-boundary test.",
+        "'oobe\\bypassnro.cmd is removed.' It still ships on 23H2. Any provisioning or documentation that claims the local-account bypass is impossible is wrong on this build (the unattend local account is still the method this harness uses, because it works on ALL of them).",
+        "'DISM /AnalyzeComponentStore says what it says on 25H2.' The recommendation wording, the WinSxS layout and the reclaimable-space arithmetic all differ across builds - the exact site health.ps1 ~736 parses in English.",
+        "'The default service set is the same.' 23H2 predates several 24H2 service renames and additions; FFExpectedServices must not grade a service that does not exist on this build as 'deleted by a debloat script'."
+      ],
+      "notes": "The only cell below build 26100. If the build gates in data/repairs.json are wrong, they are wrong here."
+    },
+
+    {
+      "id": "pro-24h2-de-de-x64",
+      "role": "locale",
+      "vmName": "ff-pro-24h2-de-de-x64",
+      "baseKey": "24h2-de-de-pro-x64",
+      "enabled": true,
+      "os": { "product": "Windows 11 Pro", "release": "24H2", "expectedBuild": 26100, "architecture": "x64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_24H2_German_x64.iso",
+        "source": "consumer-multi-edition-localized",
+        "sourceDetail": "A LOCALIZED ISO, not an en-US ISO with a language pack added afterwards. This matters: an en-US install with a de-DE language pack leaves the system UI language en-US until it is switched AND leaves English MUI resources in place, so half the text parses would still match and the cell would report a false pass. Download 'Deutsch' from the Windows 11 disk image page, or `Fido -Lang German`.",
+        "imageName": "Windows 11 Pro",
+        "editionIndex": 6,
+        "language": "de-DE",
+        "architecture": "amd64",
+        "sha256": null
+      },
+      "unattend": "unattend/Win11-x64-de-DE.xml",
+      "computerName": "FF-DEDE",
+      "conditioning": [],
+      "repairSet": "full",
+      "network": "none",
+      "assumptionsKilled": [
+        "THE SEED BUG. Every confirmed English-text decision site: health.ps1 ~123 (sfc 'did not find any integrity violations' / 'found integrity violations'), ~174 (fsutil 'is Dirty' / 'is NOT Dirty'), ~736 (DISM 'Component Store Cleanup Recommended'), ~830 (powercfg /a 'Fast Startup', 'available on this system'); repair.ps1 ~216 (w32tm 'Last Successful Sync Time', 'unspecified'), ~1026 (sfc 'successfully repaired' / 'unable to fix'). On de-DE every one of those regexes fails to match. The question this cell answers is what the code does NEXT: report 'unknown' (correct) or fall through to 'ok' (false pass).",
+        "'Service DISPLAY names identify a service.' They are translated; only the service KEY name and the SID are not.",
+        "'Event log Message text can be matched.' The Message is rendered from localized MUI resources. Event Id and EventData are not.",
+        "'Numbers parse.' de-DE uses a decimal comma and a dot as the thousands separator; any [double]::Parse / -as [int] on tool output that hits the current culture reads 1.234 as 1234.",
+        "'Dates parse.' dd.MM.yyyy. ConvertFrom-FFTimestamp is already invariant-only for exactly this reason; anything else that touches [datetime]::Parse is not.",
+        "'%ProgramFiles% is 'Program Files'.' It is, on de-DE - but the SHELL displays 'Programme' and several well-known folders are display-localized. Any path built from a display name breaks."
+      ],
+      "notes": "Latin-script but fully translated: it separates 'the text is different' from 'the bytes are different', which is what the ja-JP cell adds."
+    },
+
+    {
+      "id": "pro-24h2-ja-jp-x64",
+      "role": "locale-nonlatin",
+      "vmName": "ff-pro-24h2-ja-jp-x64",
+      "baseKey": "24h2-ja-jp-pro-x64",
+      "enabled": true,
+      "os": { "product": "Windows 11 Pro", "release": "24H2", "expectedBuild": 26100, "architecture": "x64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_24H2_Japanese_x64.iso",
+        "source": "consumer-multi-edition-localized",
+        "sourceDetail": "Localized ja-JP ISO (same rule as de-DE: not a language pack over en-US).",
+        "imageName": "Windows 11 Pro",
+        "editionIndex": 6,
+        "language": "ja-JP",
+        "architecture": "amd64",
+        "sha256": null
+      },
+      "unattend": "unattend/Win11-x64-ja-JP.xml",
+      "computerName": "FF-JAJP",
+      "conditioning": [],
+      "repairSet": "full",
+      "network": "none",
+      "assumptionsKilled": [
+        "Everything the de-DE cell kills, plus the ENCODING layer that a Latin-script locale cannot expose.",
+        "'Console output is readable text.' The OEM code page is 932 (Shift-JIS), not 437/1252. Native tool stdout captured by PowerShell 5.1 through the pipeline is decoded with [Console]::OutputEncoding; when that is wrong the text arrives as mojibake and even a CORRECT regex fails. This is how a locale fix that only adds German keywords still breaks in Japan.",
+        "'JSON round-trips.' ConvertTo-Json on mojibake, then the Electron host reading it as UTF-8, is a second corruption. Write-FFJson writes BOM-free UTF-8 - this cell is where that is proven end to end rather than asserted.",
+        "'Paths are ASCII.' Known folders (Desktop, Documents) render with non-ASCII display names, and any temp/profile path built from them breaks -LiteralPath assumptions.",
+        "'String length equals display width.' Irrelevant to correctness but it is where the UI truncation bugs live.",
+        "'The IME does not exist.' A ja-JP OOBE adds an input-method stage that a naive unattend does not skip - which is why this cell has its own unattend rather than sharing the en-US one."
+      ],
+      "notes": "If exactly one non-en-US cell can be afforded in time, run this one, not de-DE: it fails in strictly more ways."
+    },
+
+    {
+      "id": "pro-24h2-wsus-x64",
+      "role": "managed",
+      "vmName": "ff-pro-24h2-wsus-x64",
+      "baseKey": "24h2-en-us-pro-x64",
+      "enabled": true,
+      "os": { "product": "Windows 11 Pro", "release": "24H2", "expectedBuild": 26100, "architecture": "x64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_24H2_EnglishInternational_x64.iso",
+        "source": "consumer-multi-edition",
+        "sourceDetail": "Shares the 24H2 en-US Pro base VHDX with no other cell by default; if disk is tight, point baseKey at the same base as another 24H2 en-US Pro cell and let the conditioning script differentiate it.",
+        "imageName": "Windows 11 Pro",
+        "editionIndex": 6,
+        "language": "en-US",
+        "architecture": "amd64",
+        "sha256": null
+      },
+      "unattend": "unattend/Win11-x64-en-US.xml",
+      "computerName": "FF-WSUS",
+      "conditioning": ["wsus-policy"],
+      "repairSet": "full",
+      "network": "none",
+      "assumptionsKilled": [
+        "'This machine is unmanaged, so the WSUS/proxy branches of wu-reset are dead code.' Conditioning writes a real HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate policy pinning the client to a WSUS server that does not exist, plus AU\\UseWUServer=1. Every managed branch in repair.ps1 becomes live.",
+        "'wu-reset is safe to run anywhere.' It must NOT clear the WinHTTP proxy and must NOT delete the WSUS client identity here - on a managed network those are the machine's only route to updates, and deleting them is precisely the WinUtil behaviour FrameForge advertises that it does not copy. The assertion is that the run result reports the managed skips explicitly.",
+        "'Get-WuManagementState reports managed=false.' Here it must report managed=true / wsusManaged=true / the server URL, and the preflight managementNote must change wording. A preflight that still says 'no WSUS pinning' is a measurement failure.",
+        "'Windows Update failures mean the update stack is broken.' On this cell the failures are POLICY, and a repair that 'fixes' them by removing policy would be destroying configuration, not repairing."
+      ],
+      "limitations": [
+        "This is WSUS/GPO pinning WITHOUT domain membership. Real domain membership (Win32_ComputerSystem.PartOfDomain = true, the domain time hierarchy that ntp-resync refuses on, the Local GPO store applied by a real DC) needs a second VM running AD DS, which this harness does not build. The domain-only branches - notably ntp-resync's domain refusal - therefore remain UNTESTED, and Invoke-VmMatrix.ps1 records them as skip/'needs-domain-controller', never as pass."
+      ],
+      "notes": "Conditioning runs before the 'clean' checkpoint, so the policy is part of this cell's baseline rather than a fault."
+    },
+
+    {
+      "id": "pro-24h2-en-us-arm64",
+      "role": "architecture",
+      "vmName": "ff-pro-24h2-en-us-arm64",
+      "baseKey": "24h2-en-us-pro-arm64",
+      "enabled": false,
+      "optional": true,
+      "requiresHostArchitecture": "arm64",
+      "os": { "product": "Windows 11 Pro", "release": "24H2", "expectedBuild": 26100, "architecture": "arm64", "generation": "win11" },
+      "iso": {
+        "fileName": "Win11_24H2_EnglishInternational_arm64.iso",
+        "source": "consumer-multi-edition-arm64",
+        "sourceDetail": "Microsoft publishes an ARM64 consumer ISO on the same disk-image page. It is bootable ONLY on an ARM64 Hyper-V host.",
+        "imageName": "Windows 11 Pro",
+        "editionIndex": 6,
+        "language": "en-US",
+        "architecture": "arm64",
+        "sha256": null
+      },
+      "unattend": "unattend/Win11-arm64-en-US.xml",
+      "computerName": "FF-ARM64",
+      "conditioning": [],
+      "repairSet": "smoke",
+      "network": "none",
+      "skipReasonWhenHostIsX64": "Hyper-V does not emulate a foreign CPU architecture. An x64 host cannot run an ARM64 guest at all - not slowly, not at all. New-TestVm.ps1 refuses this cell on an x64 host with code 'host-architecture-mismatch', and Invoke-VmMatrix.ps1 records every one of its rows as skip/'cell-unavailable'. It is NEVER silently reported as passing.",
+      "assumptionsKilled": [
+        "'%ProgramFiles(x86)% means x86.' On ARM64 it holds x86 AND ARM32 content and the emulation layer changes which binaries resolve.",
+        "'System32 binaries are x64.' They are ARM64; SysWOW64 is x86-under-emulation and SysArm32 exists. Any hard-coded native path or architecture token in image.ps1's Convert-FFArchToken / Get-FFOsArchitecture is exercised here for real.",
+        "'The optional-feature payload is architecture-neutral.' NetFx3's sources\\sxs payload is per-architecture: an x64 ISO's sxs folder cannot satisfy enable-netfx3 on ARM64.",
+        "'PresentMon / nvidia.ps1 run.' Neither has an ARM64 story. They must degrade to 'not available on this platform', not to a fabricated measurement."
+      ],
+      "notes": "Optional and skippable by design. Enable it only on an ARM64 host (a Snapdragon-based PC or Dev Kit with Hyper-V)."
+    }
+  ],
+
+  "nonVirtualisableCells": [
+    {
+      "id": "laptop-battery",
+      "wanted": "A real laptop on battery power, so the power/battery signals are measured rather than assumed.",
+      "canBeVirtualised": false,
+      "reason": "HYPER-V EMULATES NO BATTERY. There is no ACPI battery device in a Gen 2 VM, so Win32_Battery returns NOTHING, Get-CimInstance Win32_Battery yields an empty set, and the power source always reads as AC/mains. That combination is the worst possible shape for this codebase: a check written as 'if a battery exists and is discharging, warn' evaluates to 'no battery, therefore not discharging, therefore fine' and emits a confident PASS on a machine it never measured. It is a FALSE PASS produced by absence, and no amount of VM configuration fixes it - the device simply is not there.",
+      "whatItLeavesUntested": [
+        "Any power-plan / power-source finding in health.ps1's boot category.",
+        "image.ps1's Get-FFPowerStatus AC-rail gate, which exists to stop a Windows reinstall starting on battery. In a VM it is permanently green, so its refusal path has never executed.",
+        "Battery-driven throttling assumptions anywhere in measure.ps1."
+      ],
+      "howToCoverItInstead": [
+        "REAL HARDWARE: run the guest-side probes on an actual laptop, unplugged, and diff against the same probes plugged in. This is the only honest coverage.",
+        "MOCK: shim the CIM query behind a seam (a function returning the Win32_Battery rows) and unit-test the seam with three fixtures - no battery, battery on AC, battery discharging - asserting that 'no battery' produces 'could not determine' and NOT 'ok'. The mock proves the branch logic; only hardware proves the measurement.",
+        "Whichever is chosen, the results matrix must show this row as skip/'not-virtualisable', never as an absent row and never as a pass."
+      ]
+    },
+    {
+      "id": "real-gpu",
+      "wanted": "An RTX 5080 (or any discrete GPU) so nvidia.ps1, the NVIDIA settings catalog and PresentMon capture are exercised.",
+      "canBeVirtualised": false,
+      "reason": "A Hyper-V Gen 2 VM presents a Microsoft Basic Display Adapter. GPU partitioning (GPU-P) can pass a slice of a physical GPU through, but the driver surface, NVAPI availability and PresentMon's swap-chain capture are not equivalent to bare metal, and D3D presentation in a VM console is not the thing being measured.",
+      "whatItLeavesUntested": ["engine/nvidia.ps1 in full", "engine/measure.ps1 / PresentMon frame capture", "data/nvidia-settings.json application and undo"],
+      "howToCoverItInstead": ["The dev box itself is the only available GPU platform; treat GPU coverage as single-machine and say so."]
+    },
+    {
+      "id": "real-disk-health",
+      "wanted": "A drive with actual SMART/media errors, so the disk-media-errors and drive-health findings can fire.",
+      "canBeVirtualised": false,
+      "reason": "A VHDX reports as a healthy virtual disk. Get-PhysicalDisk HealthStatus is always Healthy, Get-StorageReliabilityCounter returns nothing useful, and there is no NVMe SMART data. The dirty bit and file-system corruption ARE injectable (and are), but media failure is not.",
+      "whatItLeavesUntested": ["disk-media-errors findings", "the 'the file system is clean, so the fault is the drive or its cable' branch of chkdsk-scan's result"],
+      "howToCoverItInstead": ["A USB stick that is genuinely failing, or a fixture-driven unit test of the counter-parsing seam. Record as skip, not pass."]
+    },
+    {
+      "id": "domain-member",
+      "wanted": "A real domain-joined client, for the Local GPO store and ntp-resync's domain-time-hierarchy refusal.",
+      "canBeVirtualised": true,
+      "reason": "Virtualisable in principle - but it needs a SECOND VM running AD DS, a private switch, DNS, and a domain join, which roughly doubles the harness. Out of scope for this version; the WSUS cell covers policy-pinning without membership.",
+      "whatItLeavesUntested": ["ntp-resync's refusal on a domain member", "Win32_ComputerSystem.PartOfDomain = true branches", "Local GPO applied by a real DC rather than raw registry policy values"],
+      "howToCoverItInstead": ["Add a dc-24h2 cell running AD DS and a private switch, or record these branches as untested."]
+    },
+    {
+      "id": "audio-device",
+      "wanted": "A real audio endpoint in an error state.",
+      "canBeVirtualised": false,
+      "reason": "A Hyper-V VM has no audio device (audio is redirected only through an interactive VMConnect session, and not as a PnP endpoint the guest enumerates). The SERVICE half of audio-restart is fully testable - Audiosrv and AudioEndpointBuilder exist and can be disabled - but the DEVICE half (a device in an error state) has no hardware to be in an error state.",
+      "whatItLeavesUntested": ["the audio device-error findings; audio-restart's verify step can only confirm the services, which the results matrix must state rather than implying full coverage"],
+      "howToCoverItInstead": ["Real hardware with a disabled/errored endpoint, or a fixture test of the device-enumeration seam."]
+    },
+    {
+      "id": "third-party-reality",
+      "wanted": "OEM bloat, a third-party AV, a real printer, a VPN filter driver in the winsock catalog.",
+      "canBeVirtualised": false,
+      "reason": "These are what actually break repairs in the field - a third-party AV that locks SoftwareDistribution, a VPN LSP that winsock-reset removes and the user then cannot reconnect. A clean MSDN-media VM has none of them, so the harness measures the BEST case for every repair. That is a ceiling on what any green matrix here can claim.",
+      "whatItLeavesUntested": ["Every 'and then it failed on a real machine' scenario."],
+      "howToCoverItInstead": ["Nothing in this harness. State it in the README and never let a green matrix be read as 'validated on real machines'."]
+    }
+  ],
+
+  "faults": [
+    {
+      "id": "dirty-bit",
+      "script": "guest/faults/dirty-bit.ps1",
+      "breaks": "Marks the NTFS volume dirty (fsutil dirty set), the exact condition chkdsk exists for.",
+      "groundTruth": "fsutil dirty query EXIT CODE (0 = dirty, 1 = not dirty). The exit code is identical on every UI language - the sentence it prints is not. That difference is the whole point of this fault.",
+      "revertible": false,
+      "revertNote": "There is no 'fsutil dirty clear'. The bit is cleared only by chkdsk (which is the repair under test) or by discarding the VM state. Revert therefore reports revertible:false honestly and the orchestrator relies on the checkpoint restore it performs anyway.",
+      "warnings": ["Do NOT reboot the guest between injection and the repair: autochk clears the bit at boot and the repair would then be measured against a volume that is no longer dirty."]
+    },
+    {
+      "id": "wu-broken",
+      "script": "guest/faults/wu-broken.ps1",
+      "breaks": "Disables and stops the update services (wuauserv, bits, cryptsvc, UsoSvc, DoSvc), corrupts SoftwareDistribution (renames DataStore and writes a junk DataStore.edb), and writes a dead WSUS policy pointing at a server that does not exist.",
+      "groundTruth": "Registry Start values under HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name>, the presence of the junk DataStore.edb, and the policy values themselves - all structural reads.",
+      "revertible": true,
+      "presets": {
+        "full": "services + SoftwareDistribution + dead WUServer policy",
+        "services": "services only (for store-services-enable-style assertions)",
+        "datastore": "SoftwareDistribution corruption only"
+      },
+      "warnings": ["On the WSUS cell the dead policy is already part of the baseline; use preset 'services' or 'datastore' there so the fault is distinguishable from the conditioning."]
+    },
+    {
+      "id": "store-broken",
+      "script": "guest/faults/store-broken.ps1",
+      "breaks": "Unregisters the Microsoft.WindowsStore package for the current user, corrupts its LocalCache, and disables AppXSvc / ClipSVC / StateRepository via their registry Start values.",
+      "groundTruth": "Get-AppxPackage returning no Microsoft.WindowsStore for the user (a structured object, not text) plus the service Start values.",
+      "revertible": true,
+      "presets": { "unregister": "package only", "cache": "LocalCache only", "services": "dependency services only", "full": "all three" },
+      "warnings": ["Set-Service on AppXSvc is access-denied even elevated; the Start value must be written in the registry, which is what this script does."]
+    },
+    {
+      "id": "search-broken",
+      "script": "guest/faults/search-broken.ps1",
+      "breaks": "Stops WSearch, sets its Start value to disabled, and truncates Windows.edb to zero bytes.",
+      "groundTruth": "Service Start value + Windows.edb length in bytes + whether SearchIndexer.exe is running.",
+      "revertible": true,
+      "presets": { "stop-only": "stop the service (produces indexer-process-missing without destroying the index)", "full": "stop + disable + truncate the index" }
+    },
+    {
+      "id": "spooler-jam",
+      "script": "guest/faults/spooler-jam.ps1",
+      "breaks": "Stops the spooler and writes junk .SHD/.SPL files into %SystemRoot%\\System32\\spool\\PRINTERS, then optionally disables the service.",
+      "groundTruth": "Count of files in the spool directory that this script created (recorded by name) plus the service Start value.",
+      "revertible": true
+    },
+    {
+      "id": "network-broken",
+      "script": "guest/faults/network-broken.ps1",
+      "breaks": "Sets a bogus static DNS server (203.0.113.53, TEST-NET-3, guaranteed unroutable) on every up adapter and sets an invalid WinHTTP proxy.",
+      "groundTruth": "Get-DnsClientServerAddress (structured) and the raw WinHttpSettings binary registry blob - NOT 'netsh winhttp show proxy' text, which is localized.",
+      "revertible": true,
+      "revertNote": "Prior DNS is captured per interface index including whether it was DHCP-assigned, and restored to exactly that (doctrine rule 3). The WinHTTP blob is captured and written back byte for byte."
+    },
+    {
+      "id": "component-store-broken",
+      "script": "guest/faults/component-store-broken.ps1",
+      "breaks": "Takes ownership of one payload file inside WinSxS and renames it, producing genuine component-store corruption that DISM /ScanHealth and SFC both see.",
+      "groundTruth": "The renamed file's existence at the original and the .ffbroken path, plus the captured owner/ACL.",
+      "revertible": true,
+      "revertNote": "Renames back and restores the captured owner and ACL. If the repair under test already restored the file from the payload, revert reports that instead of failing.",
+      "warnings": [
+        "This does REAL damage to the Windows image. It runs only in a VM, and only against a target chosen from a documented candidate list; if no candidate resolves, the script REFUSES and reports 'could not determine a safe target' rather than picking something at random.",
+        "sfc-scannow may repair the file from WinSxS itself, which is the intended outcome; dism-restorehealth needs -SourcePath because the cells have no network."
+      ]
+    },
+    {
+      "id": "time-sync-broken",
+      "script": "guest/faults/time-sync-broken.ps1",
+      "breaks": "Stops and disables W32Time, points the manual peer list at a host that does not resolve, and (optionally) skews the clock forward.",
+      "groundTruth": "Service Start value, HKLM\\SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters NtpServer/Type registry values, and the clock offset the script itself applied.",
+      "revertible": true,
+      "revertNote": "Service state and the NtpServer/Type values are restored from capture. The CLOCK is not restored exactly - the script records the offset it applied and says so; only a checkpoint restore returns the clock to its prior instant."
+    },
+    {
+      "id": "services-disabled",
+      "script": "guest/faults/services-disabled.ps1",
+      "breaks": "Sets a named set of services to Start=4 (disabled) and stops them. The generic 'a debloat script disabled this' fault.",
+      "groundTruth": "Registry Start value per service, captured before and re-read after.",
+      "revertible": true,
+      "presets": {
+        "audio": ["Audiosrv", "AudioEndpointBuilder"],
+        "store": ["AppXSvc", "ClipSVC", "StateRepository", "InstallService"],
+        "update": ["wuauserv", "bits", "cryptsvc", "UsoSvc", "DoSvc"],
+        "search": ["WSearch"],
+        "spooler": ["Spooler"],
+        "time": ["W32Time"]
+      }
+    },
+    {
+      "id": "disk-space-fill",
+      "script": "guest/faults/disk-space-fill.ps1",
+      "breaks": "Consumes free space on C: with two separate sets of files, both created by `fsutil file createnew` (allocated instantly, no data written, so a dynamic VHDX does not grow to match): BALLAST outside every folder temp-clean sweeps, bringing free space to the level a successful repair should leave behind, and JUNK inside %TEMP% and %SystemRoot%\\Temp, which is the part the repair is supposed to reclaim.",
+      "groundTruth": "Free bytes on the volume before and after, and the list of files the script created.",
+      "revertible": true,
+      "revertNote": "Deletes exactly the files it created, by the manifest it wrote - never a wildcard sweep of the temp folder. Junk the repair already deleted is reported as 'already gone', which is evidence the repair worked rather than an error.",
+      "sizingNote": "The split between ballast and junk is what makes the row judgeable at all - see the repairPlan note for temp-clean.",
+      "refusesWhen": "Free space is already below the post-clean target; the script writes NOTHING and reports could-not-determine rather than producing a state no repair could clear."
+    },
+    {
+      "id": "optional-feature-disable",
+      "script": "guest/faults/optional-feature-disable.ps1",
+      "breaks": "Nothing, usually: NetFx3, NetFx4-AdvSrvs and DirectPlay are already Disabled (NetFx3 is DisabledWithPayloadRemoved) on a clean image. The script CAPTURES that prior state and, if a feature is enabled, disables it.",
+      "groundTruth": "Get-WindowsOptionalFeature -Online -FeatureName <n> .State - a structured enum, locale-independent.",
+      "revertible": true,
+      "revertNote": "This fault exists mainly so undo can be asserted: enable-netfx3's undo must restore DisabledWithPayloadRemoved with -Remove, not a plain Disabled. That distinction is doctrine rule 3 in miniature and it is only visible if the prior state was captured first."
+    },
+    {
+      "id": "winget-broken",
+      "script": "guest/faults/winget-broken.ps1",
+      "breaks": "Unregisters Microsoft.DesktopAppInstaller for the current user, removing winget from PATH.",
+      "groundTruth": "Get-AppxPackage Microsoft.DesktopAppInstaller and Get-Command winget.exe.",
+      "revertible": true,
+      "revertNote": "Re-registers from the still-present staged package. If the package files were also removed there is nothing to re-register without a network, and the script says so instead of claiming success."
+    },
+    {
+      "id": "wsus-policy",
+      "script": "guest/faults/wsus-policy.ps1",
+      "breaks": "Writes the WSUS/GPO pinning used by the managed cell. Used as CONDITIONING (applied before the clean checkpoint), not as a per-repair fault.",
+      "groundTruth": "The policy registry values themselves.",
+      "revertible": true
+    }
+  ],
+
+  "repairPlan": [
+    { "repair": "wu-reset", "fault": "wu-broken", "faultArgs": { "Preset": "full" }, "healthCategory": "windows-update", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "notes": "On pro-24h2-wsus-x64 use Preset 'services' and additionally assert that the run reports the managed skips (WinHTTP proxy untouched, WSUS identity untouched)." },
+    { "repair": "wu-reset-aggressive", "fault": "wu-broken", "faultArgs": { "Preset": "full" }, "healthCategory": "windows-update", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "requiresSystemProtection": true, "notes": "restorePoint:enforced. System Protection is OFF on a fresh image, so guest/setup/Initialize-Guest.ps1 enables it before the clean checkpoint; without that this repair correctly ABORTS, and an abort would be a harness fault, not an engine fault." },
+    { "repair": "dism-restorehealth", "fault": "component-store-broken", "healthCategory": "system-files", "requiresNetwork": false, "requiresSource": true, "expectReboot": true, "undo": false, "expect": "pass", "requiresProbeDeep": true, "notes": "Cells have no network, so DISM /RestoreHealth MUST have -SourcePath WIM:<mounted ISO>\\sources\\install.wim:<index>. The orchestrator attaches the install ISO as a third DVD for this repair. Without a source the honest outcome is a failed restore, and that is recorded as expect:'not-verified', not as a harness failure. requiresProbeDeep: see the field note - the shallow system-files probe CANNOT see this fault." },
+    { "repair": "sfc-scannow", "fault": "component-store-broken", "healthCategory": "system-files", "requiresNetwork": false, "requiresSource": false, "expectReboot": true, "undo": false, "expect": "pass", "requiresProbeDeep": true, "notes": "THE headline locale case. On de-DE/ja-JP sfc.exe prints translated text and exits 0 either way; the run must reach its verdict from the exit code and the CBS.log [SR] markers, and must report sfcOutcome 'indeterminate' (NOT completed) if it cannot. A run that reports stepsCompleted:true with an unread SFC result on a locale cell is a false pass. requiresProbeDeep: see the field note - the shallow system-files probe CANNOT see this fault." },
+    { "repair": "wu-repair-reinstall", "fault": null, "healthCategory": "system-files", "skip": true, "skipReason": "no-automatable-outcome", "notes": "A consent-gated guided handoff that opens ms-settings:recovery and verifies nothing by design. There is no assertion an automated harness can make about it beyond 'it opened a Settings page', which proves nothing about a repair. Covered by reading the code and by the selftest, not here." },
+    { "repair": "chkdsk-scan", "fault": "dirty-bit", "healthCategory": "disk", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "notes": "Read-only scan. The assertion that matters is DETECTION: fsutil dirty query exits 0 (ground truth: dirty) and the disk probe must raise ntfs-dirty-bit on every locale. health.ps1 ~174's English 'is Dirty' parse is exactly here.", "confound": "NONE for this row - chkdsk-scan does not reboot, so the dirty bit it detects is the one the harness set." },
+    { "repair": "chkdsk-spotfix", "fault": "dirty-bit", "healthCategory": "disk", "requiresNetwork": false, "requiresSource": false, "expectReboot": true, "undo": false, "expect": "pass", "confound": "READ THIS BEFORE TRUSTING A PASS ON THIS ROW. The catalog marks chkdsk-spotfix requiresReboot, so the harness restarts the guest before verifying - and ANY boot of a volume with the dirty bit set runs autochk, which repairs and clears it. The post-reboot healthy verdict is therefore not attributable to the repair alone: the reboot would have produced it too. The trustworthy assertion on this row is fault-DETECTION (phase 3), which happens before anything reboots. Treat verify here as necessary, not sufficient, and say so in any report that cites it." },
+    { "repair": "chkdsk-full-repair", "fault": "dirty-bit", "healthCategory": "disk", "requiresNetwork": false, "requiresSource": false, "expectReboot": true, "rebootIsThePoint": true, "undo": false, "expect": "pass", "confound": "NONE - here the reboot IS the repair. chkdsk-full-repair only schedules a boot-time check, so autochk running during the harness's restart is the mechanism under test rather than a confound. The run must claim only that the check was scheduled, and the harness reads BootExecute plus the dirty bit to confirm that structurally.", "notes": "The run may only claim the check was SCHEDULED. The harness reboots the guest, waits for PowerShell Direct to come back (autochk runs during that boot and takes minutes), and only then asserts the dirty bit is clear." },
+    { "repair": "network-flush", "fault": "network-broken", "faultArgs": { "Preset": "dns" }, "healthCategory": "network", "requiresNetwork": true, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass" },
+    { "repair": "dns-change-resolver", "fault": "network-broken", "faultArgs": { "Preset": "dns" }, "healthCategory": "network", "requiresNetwork": true, "requiresSource": false, "expectReboot": false, "undo": true, "undoAssertion": "restores-prior-state", "expect": "pass", "notes": "Reversible. Undo must restore the CAPTURED prior resolvers per interface - including restoring DHCP-assigned when that is what was captured - and the assertion compares against the fault script's own independent capture, not against a default." },
+    { "repair": "winsock-reset", "fault": "network-broken", "faultArgs": { "Preset": "full" }, "healthCategory": "network", "requiresNetwork": true, "requiresSource": false, "expectReboot": true, "undo": false, "expect": "pass", "notes": "THE reason the whole harness is PowerShell Direct. This repair resets the winsock catalog and the IP stack; any network-based control channel to the guest (WinRM over TCP, SSH, a share) dies mid-repair and the harness would lose the result of the very command it is measuring. PowerShell Direct rides the VMBus and does not care." },
+    { "repair": "store-cache-reset", "fault": "store-broken", "faultArgs": { "Preset": "cache" }, "healthCategory": "store", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass" },
+    { "repair": "store-services-enable", "fault": "services-disabled", "faultArgs": { "Preset": "store" }, "healthCategory": "store", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "notes": "The cleanest structural assertion in the matrix: registry Start values in, registry Start values out, no text anywhere." },
+    { "repair": "store-reregister", "fault": "store-broken", "faultArgs": { "Preset": "unregister" }, "healthCategory": "store", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass" },
+    { "repair": "store-reregister-all", "fault": "store-broken", "faultArgs": { "Preset": "full" }, "healthCategory": "store", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "requiresSystemProtection": true, "slow": true, "runOnCells": ["pro-25h2-en-us-x64", "pro-24h2-ja-jp-x64"], "notes": "Aggressive tier, re-registers every provisioned package, minutes per run. Restricted to the control cell and one locale cell to keep total runtime sane." },
+    { "repair": "search-index-rebuild", "fault": "search-broken", "faultArgs": { "Preset": "full" }, "healthCategory": "search", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "notes": "Verify may legitimately report 'a rebuild has started', not 'the index is complete'. The assertion accepts the honest in-progress result and rejects a claim of completion." },
+    { "repair": "shell-restart", "fault": "search-broken", "faultArgs": { "Preset": "stop-only" }, "healthCategory": "search", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": true, "undoAssertion": "documented-noop", "expect": "pass", "notes": "Reversible with an intentional NO-OP undo ('shell hosts are stateless; nothing to restore'). Asserting that undo returns success WITH that explanation, rather than inventing a restore, is a doctrine test in its own right." },
+    { "repair": "spooler-clear-queue", "fault": "spooler-jam", "healthCategory": "printing", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "notes": "A VM has no printers, so the printer-error-state half of this category cannot fire; the spool-files-present and spooler-not-running halves are fully covered. The results matrix records the partial coverage." },
+    { "repair": "audio-restart", "fault": "services-disabled", "faultArgs": { "Preset": "audio" }, "healthCategory": "audio", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": true, "undoAssertion": "restores-prior-state", "expect": "pass", "coverage": "partial", "coverageNote": "Service half only - see nonVirtualisableCells/audio-device." },
+    { "repair": "ntp-resync", "fault": "time-sync-broken", "healthCategory": null, "localDetect": "ntp", "requiresNetwork": true, "requiresSource": false, "expectReboot": false, "undo": true, "undoAssertion": "restores-prior-state", "expect": "pass", "notes": "repair.ps1 ~216 parses w32tm's English 'Last Successful Sync Time' / 'unspecified'. On de-DE/ja-JP those strings do not exist, so the verdict must come from the W32Time service state and System event id 35 (numeric, identical on every language). Needs a network to actually reach a time server; without one the honest result is 'could not sync', recorded as expect 'not-verified'." },
+    { "repair": "temp-clean", "fault": "disk-space-fill", "faultArgs": { "PostCleanFreeGB": 26, "JunkGB": 18 }, "healthCategory": "disk-space", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "pass", "notes": "The sizing is deliberate and had to be worked out from health.ps1: the SYSTEM drive is graded critical under 20 GB free regardless of percentage, so on a 64 GB test VHDX a naive fill-to-8% would leave the volume unhealthy even after a perfect repair, and the row would fail as verify-not-healthy while the repair had done its job. The ballast (outside the swept folders) brings free space to the POST-CLEAN target of 26 GB; the junk (inside them) takes it down to about 8 GB. temp-clean can therefore actually clear the finding, and it is credited only with the junk - the ballast is removed by the fault's own revert." },
+    { "repair": "component-cleanup", "fault": null, "healthCategory": "disk-space", "skip": true, "skipReason": "no-synthetic-fault", "notes": "The finding is 'Component Store Cleanup Recommended', which requires genuinely superseded components - the residue of real cumulative updates. It cannot be synthesized on a freshly installed image without letting the VM take updates from the internet, which destroys determinism. Cover it by building one long-lived, fully-updated base VHDX and running this repair against that base by hand. Until then it is skip/'no-synthetic-fault', never pass. NOTE that health.ps1 ~736 parses this DISM output in English, so this gap sits directly on a known locale bug." },
+    { "repair": "component-cleanup-resetbase", "fault": null, "healthCategory": "disk-space", "skip": true, "skipReason": "no-synthetic-fault", "notes": "Same gap as component-cleanup, and additionally irreversible (uninstalling previously-installed updates becomes impossible)." },
+    { "repair": "activation-retry", "fault": null, "healthCategory": "activation", "baselineExpectedFaulted": true, "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "detected-not-verified", "notes": "No fault needed: a VM installed with no product key is genuinely unactivated, which is a real fault, not a simulated one. The assertion is deliberately different from every other row - the repair must DETECT windows-not-activated, RUN, and then honestly report that it did not fix it (no key, no network). A run that reports success here is a false pass of the second kind: claiming a repair worked because a command exited zero. This is also a locale case: the fix re-queries SoftwareLicensingProduct.LicenseStatus rather than looking for 'successfully' in slmgr's localized output." },
+    { "repair": "winget-repair", "fault": "winget-broken", "healthCategory": null, "localDetect": "winget", "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": false, "expect": "detected-not-verified", "notes": "Re-registering App Installer works offline only if the staged package is still on disk. When it is not, the honest result is 'could not repair without a network' - assert that, not success." },
+    { "repair": "enable-netfx3", "fault": "optional-feature-disable", "faultArgs": { "FeatureName": "NetFx3" }, "healthCategory": null, "localDetect": "optional-feature", "baselineExpectedFaulted": true, "requiresNetwork": false, "requiresSource": true, "expectReboot": false, "undo": true, "undoAssertion": "restores-prior-state", "expect": "pass", "notes": "NetFx3 payload is NOT on a clean image (DisabledWithPayloadRemoved), so -SourcePath <mounted ISO>\\sources\\sxs is mandatory offline - and it must be the sxs folder for the CELL'S architecture. The undo assertion is the interesting one: the captured prior state was DisabledWithPayloadRemoved, so undo must use -Remove and land back on DisabledWithPayloadRemoved, not on plain Disabled." },
+    { "repair": "enable-netfx4-advsrvs", "fault": "optional-feature-disable", "faultArgs": { "FeatureName": "NetFx4-AdvSrvs" }, "healthCategory": null, "localDetect": "optional-feature", "baselineExpectedFaulted": true, "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": true, "undoAssertion": "restores-prior-state", "expect": "pass" },
+    { "repair": "enable-directplay", "fault": "optional-feature-disable", "faultArgs": { "FeatureName": "DirectPlay" }, "healthCategory": null, "localDetect": "optional-feature", "baselineExpectedFaulted": true, "requiresNetwork": false, "requiresSource": false, "expectReboot": false, "undo": true, "undoAssertion": "restores-prior-state", "expect": "pass" }
+  ],
+
+  "phases": [
+    { "name": "baseline-clean", "asserts": "The cell's health probe for this repair's category reports 'ok' on the restored clean checkpoint. If it does not, the checkpoint is dirty and NOTHING downstream can be concluded - the row is skip/'baseline-not-clean', never fail and never pass." },
+    { "name": "fault-injected", "asserts": "The fault script's own ground-truth probe confirms the fault is present. If injection failed, the row is fail/'fault-injection-failed' and the engine is not blamed for it." },
+    { "name": "fault-detected", "asserts": "FrameForge's read-only probe now reports the fault. Reporting 'ok' is fail/'false-pass' (the locale-bug catcher). Reporting 'unknown' is fail/'detect-unknown' - honest, but still a gap. Reporting warning/critical WITHOUT a finding matching the repair's relevantFindings is fail/'wrong-finding': the category noticed something, but not the thing this repair claims to address." },
+    { "name": "repair-ran", "asserts": "repair.ps1 -Action run returned ok:true and was not refused. A refusal here is fail/'repair-refused' with the refusalKind recorded, because the previous phase already established that the fault is real and detected." },
+    { "name": "reboot", "asserts": "When the catalog says requiresReboot, the guest is restarted and PowerShell Direct comes back within the timeout. A timeout is fail/'reboot-timeout' and the row carries no verdict about the repair itself." },
+    { "name": "verify-healthy", "asserts": "The same probe now reports healthy AND the run's own result.verified is true. For rows with expect 'detected-not-verified', the assertion is inverted: the run must report NOT verified, with a reason - a claimed success is fail/'false-success'." },
+    { "name": "undo-restored", "asserts": "For reversible repairs, undo runs and the fault script's ground-truth capture matches the pre-repair state. A mismatch is fail/'undo-not-restored'. An undo that reports success while restoring nothing is the same failure." },
+    { "name": "confounds", "asserts": "Some rows cannot be attributed to the repair alone, and the plan entry says so in a `confound` field rather than letting a green cell imply more than it proves. The chkdsk-spotfix row is the clearest case: the catalog requires a reboot, and any boot of a dirty volume runs autochk, which clears the bit by itself. Read `confound` before citing a pass." },
+    { "name": "collect", "asserts": "Every JSON document produced in the guest is copied to the host before the checkpoint is restored. A row whose evidence could not be collected is fail/'evidence-lost' regardless of what the in-guest result said - an unread result is not a pass." }
+  ],
+
+  "planFieldNotes": {
+    "baselineExpectedFaulted": "true means this row's CLEAN baseline is legitimately already faulted - an unactivated VM, an optional feature that ships disabled. The baseline-clean assertion is inverted for these rows rather than skipped, so a cell where the condition is unexpectedly absent still shows up.",
+    "undoAssertion": "restores-prior-state = after undo, the fault script's ground truth must read FAULTED again, because the state the repair captured and must restore IS the faulted state the harness injected. documented-noop = the repair is reversible but has nothing to restore (shell-restart's hosts are stateless); the assertion is that undo says so explicitly instead of inventing a restore.",
+    "expect": "pass = the repair must detect, run and verify. detected-not-verified = the repair must detect and run and then honestly report that it did NOT fix it; a claimed success on those rows is failure code false-success.",
+    "requiresProbeDeep": "This row's fault is INVISIBLE to the shallow detection probe, so the row can only be judged if the repair's catalog entry (data/repairs.json) carries probeDeep:true. Concretely: the system-files probe's shallow pass is `Repair-WindowsImage -Online -CheckHealth`, which only READS the corruption flags a previous servicing operation recorded - it does not scan. Renaming a WinSxS payload file sets no flag, so CheckHealth answers Healthy, detection answers 'healthy', and the row would be scored `false-pass`: this harness's declared release blocker, fired on every cell including the en-US control, for a reason with nothing to do with locale or with the engine's locale handling. Only the DEEP pass (sfc /verifyonly plus DISM /ScanHealth) can see it - and both dism-restorehealth and sfc-scannow already list `component-store-scanhealth` and `sfc-verify-violations` in their relevantFindings, which ONLY the deep pass can produce, so the catalog already depends on a probe depth it does not request. Until those two entries carry probeDeep:true, Invoke-VmMatrix.ps1 records these rows with outcome `not-judged` and code harness-precondition-unmet, and draws NO conclusion about the engine. That outcome is deliberately NOT a skip: it is counted on its own line, printed in capitals in the matrix table, and sets complete:false on the run document, because a catalog gap that nobody can see is how the previous round turned a loud false-pass into a silence. A row that names the gap is honest; a false-pass over a probe that was never going to see the fault is not, and neither is a quiet skip."
+  },
+  "outcomeCodes": {
+    "pass": "Every phase asserted true.",
+    "fail": "An assertion failed. See `code`.",
+    "not-judged": "The row could not be judged because a STATIC precondition it declares is not satisfied by the engine's own catalogs. See `code` and notJudgedCodes. This is deliberately its own outcome rather than a skip: a skip is a cell that happens to be unavailable and nobody need act on it, whereas a not-judged row names a defect somebody has to fix before this matrix can make its headline claim at all. It is counted separately, printed in capitals in the matrix table, listed at the top of summary.md, and sets complete:false on the run document. It is NEVER folded into pass.",
+    "skip": "The row was not run for a reason outside the code under test - the VM, its checkpoint, its architecture or its network is not available, or the operator filtered it out. See `code`. A skip is NEVER rendered as a pass and never omitted from the matrix."
+  },
+  "failCodes": {
+    "false-pass": "A fault was injected and confirmed present, and FrameForge's probe reported the category healthy. THE bug this harness exists to find.",
+    "detect-unknown": "The probe reported 'unknown' over a confirmed fault. Honest, but the signal could not be read - usually a text parse that failed on a localized system with no structural rung beneath it.",
+    "wrong-finding": "The category reported a fault but none of this repair's relevantFindings patterns matched it.",
+    "fault-injection-failed": "The fault script could not break the subsystem, or its ground-truth probe could not confirm the break. Nothing is concluded about the engine.",
+    "repair-refused": "The repair refused to run despite a detected fault.",
+    "repair-failed": "The repair ran and a non-bestEffort step failed.",
+    "verify-not-healthy": "Steps completed but the verify probe does not report healthy.",
+    "false-success": "The run claimed success where the expected honest answer was 'could not fix / could not determine'.",
+    "undo-not-restored": "Undo ran but ground truth does not match the captured prior state.",
+    "reboot-timeout": "PowerShell Direct did not come back after the reboot.",
+    "evidence-lost": "A row's JSON evidence could not be written on the host. The row fails regardless of what the in-guest answer said: a result nobody can read back later is not a result.",
+    "step-timeout": "A guest command (sfc, DISM, a boot-time chkdsk, a hung repair) did not return within -StepTimeoutMinutes and was stopped. The row records NO verdict about the repair - only that it did not finish.",
+    "engine-error": "The engine emitted a non-JSON document, a parse error, or a non-zero exit that is not one of the documented refusal codes."
+  },
+  "skipCodes": {
+    "cell-unavailable": "The VM, its checkpoint, or its host architecture is not available.",
+    "baseline-not-clean": "The clean checkpoint's own health probe is not 'ok' for this category.",
+    "no-synthetic-fault": "No honest way to create this condition in a VM.",
+    "no-automatable-outcome": "A guided/consent-gated handoff with nothing an automated assertion can measure.",
+    "not-applicable-on-this-build": "The repair's build gate excludes this cell - itself an assertion worth recording.",
+    "needs-domain-controller": "The branch requires real domain membership, which this harness does not build.",
+    "not-virtualisable": "See nonVirtualisableCells.",
+    "user-filtered": "Excluded by -Cells / -Repairs on the command line.",
+    "no-plan-entry": "The repair exists in data/repairs.json but has no entry in this file's repairPlan, so there is nothing to inject and nothing to assert. The row is still emitted rather than omitted: a repair with no coverage has to be visible as a hole in the matrix, because silence is not a pass."
+  },
+
+  "notJudgedCodes": {
+    "harness-precondition-unmet": "A STATIC precondition this row declares is not satisfied by the engine's own catalogs, so the row cannot be judged and is not run. Today the only one is requiresProbeDeep (see planFieldNotes). It is never a FAIL, because the gap is in data/repairs.json rather than in the behaviour under test and scoring it against the engine would be the exact misattribution this file exists to prevent - and it is never a SKIP either, because a skip reads as 'nothing to see here' and this is a defect with a named owner and a one-line fix. It gets its own outcome so that it cannot be quietly absorbed into a green run: the previous round made it a silent skip, which hid the very problem the harness had been briefed to surface."
+  }
+}

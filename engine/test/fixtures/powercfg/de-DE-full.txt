@@ -1,0 +1,12 @@
+Die folgenden Energiesparzustände sind auf diesem System verfügbar:
+    Standbymodus (S0 Niedriger Energiebedarf im Leerlauf) Netzwerk verbunden
+    Ruhezustand
+    Schnellstart
+
+Die folgenden Energiesparzustände sind auf diesem System nicht verfügbar:
+    Standbymodus (S1)
+        Die Systemfirmware unterstützt diesen Standbymodus nicht.
+    Standbymodus (S3)
+        Die Systemfirmware unterstützt diesen Standbymodus nicht.
+    Hybrider Standbymodus
+        Standbymodus (S3) ist nicht verfügbar.

@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FrameForge VM test harness :: autounattend template - Windows 11, x64, en-US.
+
+  TOKENS. New-TestVm.ps1 replaces these before writing the file into the unattend ISO:
+      {{COMPUTERNAME}}  guest computer name (also the domain half of the PowerShell Direct credential)
+      {{USERNAME}}      local administrator account the harness logs in as
+      {{PASSWORD}}      that account's password
+      {{IMAGE_NAME}}    the /IMAGE/NAME value, e.g. "Windows 11 Pro" - selects the edition out of a
+                        multi-edition install.wim WITHOUT depending on an index that shifts between
+                        ISO revisions
+  Any token left unreplaced makes the file invalid on purpose: New-TestVm.ps1 scans the substituted
+  text for a leftover double-brace sequence and refuses to build the ISO if it finds one. That is
+  also why this comment does not spell one out literally.
+
+  WHY A LOCAL ACCOUNT IN THE oobeSystem PASS IS THE WHOLE POINT
+  ========================================
+  Windows 11 OOBE demands a Microsoft account on consumer editions. The workaround everyone
+  knows - `oobe\bypassnro.cmd` at the network screen - WAS REMOVED in recent 24H2/25H2 builds,
+  so a harness built on it silently stops working on exactly the newest cells it most needs to
+  cover. Defining <LocalAccounts> here plus HideOnlineAccountScreens is not a bypass at all: it
+  is the supported unattended path, OOBE never reaches the account screen, and it works
+  identically on 23H2, 24H2 and 25H2. That is why every cell in this matrix provisions this way.
+
+  PASSWORD IN CLEAR TEXT - READ THIS
+  ========================================
+  <PlainText>true</PlainText> is deliberate. The obfuscated form is a base64 of the UTF-16LE
+  password concatenated with an element-dependent suffix, and getting that suffix wrong produces
+  a VM that cannot be logged into for reasons nothing reports. Clear text is honest about what
+  it is. Consequences, which you accept by using this harness:
+    * The unattend ISO on D:\ffvm\unattend contains the password. New-TestVm.ps1 deletes it after
+      the base install unless -KeepUnattendIso is passed.
+    * Windows scrubs passwords out of C:\Windows\Panther\unattend.xml at the end of OOBE, but do
+      not rely on that.
+    * These VMs must never be given a routable network path to anything you care about, and the
+      password must not be one you use anywhere else.
+
+  POWERSHELL DIRECT needs nothing configured in the guest beyond a working local administrator
+  account and the vmicvmsession integration service (on by default). The FirstLogonCommands below
+  set the execution policy so the copied-in .ps1 files run, and drop a provisioning marker the
+  host reads to confirm the install genuinely finished rather than inferring it from the first
+  moment PowerShell Direct answers.
+
+  DELIBERATELY NOT DONE: `powercfg /h off`. Hibernation and Fast Startup availability are signals
+  health.ps1 measures (the powercfg /a parse at ~830 is one of the confirmed English-text sites),
+  so the harness must not change them during provisioning.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <DiskConfiguration>
+        <!-- WillShowUI never: an unattended install that stops on a disk prompt is a hung cell. -->
+        <WillShowUI>OnError</WillShowUI>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <!-- Gen 2 / UEFI / GPT layout. No separate recovery partition: WinRE lands in the
+                 Windows partition, which is fine for a test cell and saves a partition. -->
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>260</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>128</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+              <Format>NTFS</Format>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>{{IMAGE_NAME}}</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <!-- An EMPTY <Key/> is what suppresses the product-key page while leaving the machine
+             unlicensed. That is intentional: the activation cell needs a genuinely unactivated
+             Windows so activation-retry has a real fault to detect. -->
+        <ProductKey>
+          <Key></Key>
+          <WillShowUI>OnError</WillShowUI>
+        </ProductKey>
+        <AcceptEula>true</AcceptEula>
+        <FullName>{{USERNAME}}</FullName>
+        <Organization>FrameForge VM Test</Organization>
+      </UserData>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+    <!-- LocalAccountTokenFilterPolicy = 1, set HERE and not by guest\setup\Initialize-Guest.ps1.
+
+         WHY THE UNATTEND AND NOT THE GUEST SCRIPT
+         PowerShell Direct authenticates a LOCAL account. This unattend creates a local account
+         and adds it to Administrators - it is NOT the built-in RID-500 Administrator, and a
+         non-RID-500 local admin reaching a machine non-interactively is subject to UAC remote
+         restrictions: the session holds a filtered token, so every elevated probe in health.ps1
+         degrades to 'needs-admin' and every mutating repair refuses. Invoke-VmMatrix.ps1 proves
+         the session is elevated before it concludes anything, and skips the cell if it is not.
+
+         Initialize-Guest.ps1 used to set this value itself, which was circular and could never
+         have worked on a first run: writing it needs the elevated token it exists to grant, and
+         so do the two steps before it (Set-ExecutionPolicy -Scope LocalMachine and
+         Enable-ComputerRestore, both HKLM writes). A script cannot bootstrap the privilege it
+         needs in order to bootstrap that privilege.
+
+         RunSynchronousCommand in the specialize pass runs as LOCAL SYSTEM, before any user has
+         logged on and long before PowerShell Direct is used, so it has the rights unconditionally
+         and the circularity does not exist. Initialize-Guest.ps1 now VERIFIES the value instead of
+         setting it, and refuses if it is absent - so a base image built from an older template
+         fails loudly rather than producing cells whose every row looks like an engine failure.
+
+         THIS IS A REAL SECURITY CHANGE, and it is the only one this harness makes. It applies to
+         throwaway VMs that are built with no network adapter attached (see New-TestVm.ps1). Do not
+         reuse this template for a machine that matters. -->
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>PowerShell Direct needs an unfiltered token for the local admin account (see the comment above)</Description>
+          <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" /v LocalAccountTokenFilterPolicy /t REG_DWORD /d 1 /f</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>{{COMPUTERNAME}}</ComputerName>
+      <TimeZone>Pacific Standard Time</TimeZone>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>0409:00000409</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UILanguageFallback>en-US</UILanguageFallback>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>false</SkipMachineOOBE>
+        <SkipUserOOBE>false</SkipUserOOBE>
+      </OOBE>
+
+      <UserAccounts>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>{{USERNAME}}</Name>
+            <DisplayName>{{USERNAME}}</DisplayName>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>{{PASSWORD}}</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+
+      <!-- One automatic logon so the first-logon commands run without a console operator.
+           LogonCount 1: after that the VM sits at the lock screen, which is all PowerShell
+           Direct needs (it does not require an interactive session). -->
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Username>{{USERNAME}}</Username>
+        <Password>
+          <Value>{{PASSWORD}}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Allow the harness's copied-in scripts to run</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Never sleep or blank the display mid-run (hibernation is left ALONE on purpose)</Description>
+          <CommandLine>cmd.exe /c powercfg /change standby-timeout-ac 0 &amp; powercfg /change monitor-timeout-ac 0</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Create the harness working directories</Description>
+          <CommandLine>cmd.exe /c md C:\ffvmtest\ff &amp; md C:\ffvmtest\guest\faults &amp; md C:\ffvmtest\state &amp; md C:\ffvmtest\out</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Description>Provisioning marker the host reads to confirm the install actually finished</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$b=(Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'); ('{0}.{1} {2} {3}' -f $b.CurrentBuildNumber,$b.UBR,$b.DisplayVersion,$b.EditionID) | Set-Content -Encoding ASCII C:\ffvmtest\provisioned.txt"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+
+</unattend>

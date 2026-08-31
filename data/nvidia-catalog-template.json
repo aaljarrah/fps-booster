@@ -1,6 +1,8 @@
 {
   "schemaVersion": 1,
-  "note": "Driver-INDEPENDENT template. The engine's build-catalog action resolves each csnName + value label to the concrete SettingID/code from -createCSN on the user's actual driver, producing data/nvidia-settings.json. 'auto-cap' is replaced with (refresh - 4) FPS for the user's display.",
+  "note": "Driver-INDEPENDENT template. The engine's build-catalog action resolves each csnName + value label to the concrete SettingID/code from -createCSN on the user's actual driver, producing data/nvidia-settings.json. 'auto-cap' is replaced with (refresh - 4) FPS for the user's MEASURED display refresh rate.",
+  "autoCapNote": "'auto-cap' requires a measured refresh rate (nvidia.ps1 -Action build-catalog -Refresh <hz>, sourced from sysinfo's display probe). When no refresh rate was measured, build-catalog marks the setting idConfidence='unresolved' with an unresolvedReason and it is NEVER written to a .nip. It must never fall back to a hardcoded default: a machine whose display mode could not be read would then get an FPS cap invented out of a number nobody measured.",
+  "readNote": "This file and the generated data/nvidia-settings.json are BOM-less UTF-8 and MUST be read with Get-Content -Raw -Encoding UTF8 -LiteralPath. Without -Encoding UTF8, PS 5.1 decodes them with the machine's ANSI code page and round-trips mojibake into user-facing text (this is exactly how the em-dash below became 'a-euro-quote' in a previously generated catalog).",
   "settings": {
     "power-mgmt":    { "csnName": "Power Management - Mode", "recommendedLabel": "Prefer maximum performance", "defaultLabel": "Optimal performance", "category": "power", "tier": "balanced", "impact": "medium", "scope": "per-game", "antiCheatSafe": true, "why": "Keeps the GPU at full clocks so frametimes don't wobble when the CPU briefly stalls. Consistency, not raw FPS." },
     "vsync-off":     { "csnName": "Vertical Sync", "recommendedLabel": "Force off", "defaultLabel": "Use the 3D application setting", "category": "sync", "tier": "balanced", "impact": "high", "scope": "per-game", "antiCheatSafe": true, "why": "Absolute-minimum input lag for the Esports profile; accepts screen tearing." },
@@ -21,14 +23,14 @@
   },
   "placebo": [
     { "csnName": "Texture Filtering - Quality", "claim": "Set to High Performance", "why": "Modern GPUs lose ~0 FPS from full-quality filtering; degrading it just makes textures shimmer. Leave at Quality." },
-    { "csnName": "Threaded Optimization", "claim": "Forced Off", "why": "POTENTIALLY HARMFUL on a hybrid P+E CPU — forcing single-threaded driver work removes free parallelism. Leave Auto." },
+    { "csnName": "Threaded Optimization", "claim": "Forced Off", "why": "POTENTIALLY HARMFUL on any modern multi-core CPU, and most of all on a hybrid P+E design — forcing single-threaded driver work throws away free parallelism. Leave Auto." },
     { "csnName": "CUDA - Force P2 State", "claim": "Forced Off", "why": "A memory-overclock-headroom tweak with no gaming FPS effect. Leave default." },
     { "csnName": "Texture Filtering - Negative LOD bias", "claim": "Clamp/negative", "why": "Sharpening textures below the game's own minimum is the one genuine unfair-advantage flag anti-cheat may scrutinize. FrameForge never ships this." },
     { "csnName": "Texture Filtering - Trilinear Optimization", "claim": "Off", "why": "Image-quality micro-tweak with no measurable competitive FPS benefit." }
   ],
   "inGame": [
     { "name": "NVIDIA Reflex Low Latency = On", "games": "CS2, Valorant, Apex, Fortnite, PUBG, Dota, DBD, League", "note": "The single biggest real latency win (~20-40ms). Use On+Boost only if you ever drop GPU-bound. Squad has no Reflex - the frame cap covers it.", "warn": false },
-    { "name": "Reflex 2 / Frame Warp = On", "games": "Valorant, The Finals (RTX 50-series)", "note": "Further latency cut on Blackwell; minor edge-warp on very fast flicks.", "warn": false },
+    { "name": "Reflex 2 / Frame Warp = On", "games": "Valorant, The Finals", "note": "Further latency cut where the game and your GPU generation support it (RTX 50-series / Blackwell); minor edge-warp on very fast flicks. Skip it if the option is not offered.", "warn": false },
     { "name": "DLSS Multi-Frame Generation = OFF", "games": "all competitive titles", "note": "MFG raises the FPS number but ADDS input latency - the opposite of what you want competitively.", "warn": true }
   ]
 }

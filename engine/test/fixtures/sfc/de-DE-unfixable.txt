@@ -1,0 +1,6 @@
+
+Systemscan wird gestartet. Dieser Vorgang kann einige Zeit dauern.
+
+Der Windows-Ressourcenschutz hat beschädigte Dateien gefunden, konnte jedoch einige davon nicht reparieren.
+Details sind in der CBS.Log-Datei windir\Logs\CBS\CBS.log enthalten.
+
