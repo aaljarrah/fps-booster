@@ -398,6 +398,44 @@ function xmpState(ram) {
   return !!ram.xmpLikelyOff;
 }
 
+/* ---------- catalog token substitution ----------
+   data/tweaks.json's tokenNote is a CONTRACT: {tokens} in advisory copy are substituted
+   from the live sysinfo result at render time, and an entry whose tokens cannot all be
+   resolved is suppressed entirely — the catalog must describe the user's machine, never
+   print a placeholder or a guess. This was the contract's missing half: the catalog
+   declared it, nothing implemented it, and the flagship XMP card shipped reading
+   "Your RAM runs {ram.runningMTs} MT/s" verbatim. */
+const TOKEN_RE = /\{([A-Za-z0-9_.]+)\}/g;      // for .replace — global
+const TOKEN_TEST = /\{[A-Za-z0-9_.]+\}/;       // for .test — a /g regex is stateful there
+function tokenValue(sys, dottedPath) {
+  let v = sys;
+  for (const k of dottedPath.split('.')) { if (v === null || v === undefined) return null; v = v[k]; }
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number' && v === 0) return null;   // 0 = "not read", per the contract
+  const s = String(v).trim();
+  return s || null;
+}
+function materializeTweaks(tweaks, sys) {
+  const sysUnusable = isEngineError(sys);
+  const out = [];
+  for (const t of tweaks) {
+    const texts = [t.name, t.summary, t.details, t.evidence, ...(Array.isArray(t.guide) ? t.guide : [])];
+    if (!texts.some((s) => typeof s === 'string' && TOKEN_TEST.test(s))) { out.push(t); continue; }
+    let unresolved = sysUnusable;
+    const sub = (s) => typeof s !== 'string' ? s : s.replace(TOKEN_RE, (m, p) => {
+      const v = sysUnusable ? null : tokenValue(sys, p);
+      if (v === null) { unresolved = true; return m; }
+      return v;
+    });
+    const c = { ...t, name: sub(t.name), summary: sub(t.summary), details: sub(t.details), evidence: sub(t.evidence) };
+    if (Array.isArray(t.guide)) c.guide = t.guide.map(sub);
+    // Suppress, don't degrade: an advisory that cannot name this machine's numbers is
+    // not shown with someone else's, and never with raw {placeholders}.
+    if (!unresolved) out.push(c);
+  }
+  return out;
+}
+
 /* advisory satisfaction we can actually detect on this machine */
 function advisorySatisfied(t) {
   const s = state.sys; if (isEngineError(s)) return null;
@@ -488,9 +526,13 @@ function renderDashboard() {
   const inPlace = actions.filter((t) => isApplied(t.id) === true).length;
   const counted = actions.filter((t) => isApplied(t.id) !== null).length;
   const scoreText = score === null ? '&ndash;' : String(score);
+  // The number is impact-WEIGHTED (computeScore), so it can differ from the raw count —
+  // say so, or "65" next to "6 of 9" reads as a math error. Grammar follows the count.
+  // (NB: `unchecked` is taken further down in this function.)
+  const uncounted = actions.length - counted;
   const scoreDesc = state.detectFailed
     ? 'Optimization state could not be read on this PC, so nothing is scored.'
-    : `${inPlace} of ${counted} optimizations in place, counted only from checks we can verify on this PC${counted < actions.length ? ` (${actions.length - counted} could not be checked and are not counted)` : ''}`;
+    : `${inPlace} of ${counted} optimizations in place, weighted by impact and counted only from checks we can verify on this PC${uncounted ? ` (${uncounted} could not be checked and ${uncounted === 1 ? 'is' : 'are'} not counted)` : ''}`;
   const specLine = [
     os.caption ? esc(os.caption) : 'Windows edition unknown',
     os.build ? `build ${esc(os.build)}` : null,
@@ -2739,7 +2781,9 @@ function probeIconFont() {
       withTimeout(window.ff.sysInfo(), 90000, (e) => ({ ok: false, error: String((e && e.message) || e) }), 'hardware detection'),
     ]);
     state.admin = !!admin;
-    state.tweaks = (tw && tw.tweaks) || [];
+    // Materialize the catalog against THIS machine's sysinfo before anything renders:
+    // token substitution per data/tweaks.json's tokenNote contract.
+    state.tweaks = materializeTweaks((tw && tw.tweaks) || [], sys);
     state.sys = sys;
     await refreshDetect();
     updateAdminUI();
@@ -2756,8 +2800,9 @@ function probeIconFont() {
     revealNvidiaNav();
     // Only claim free performance when the rated speed was actually read.
     const ram = !isEngineError(state.sys) ? state.sys.ram : null;
-    if (xmpState(ram) === true) {
-      setTimeout(() => toast('warn', 'Free performance found', `Your RAM runs ${ram.runningMTs} but is rated ${ram.ratedMTs}. See “Enable XMP”.`, 9000), 900);
+    // Same token discipline as the catalog: no number, no claim.
+    if (xmpState(ram) === true && ram.runningMTs && ram.ratedMTs) {
+      setTimeout(() => toast('warn', 'Free performance found', `Your RAM runs ${ram.runningMTs} MT/s but is rated ${ram.ratedMTs} MT/s. See “Enable XMP”.`, 9000), 900);
     }
   } catch (err) {
     // Last resort. Everything above degrades on its own, so reaching here means a bug —

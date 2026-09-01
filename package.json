@@ -8,9 +8,15 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test:engine": "powershell -NoProfile -ExecutionPolicy Bypass -File engine/test/run-tests.ps1"
+    "test:engine": "powershell -NoProfile -ExecutionPolicy Bypass -File engine/test/run-tests.ps1",
+    "dist": "powershell -NoProfile -ExecutionPolicy Bypass -File build/dist.ps1",
+    "dist:dir": "electron-builder --config electron-builder.config.js --win --x64 --dir"
   },
   "devDependencies": {
-    "electron": "^34.0.0"
+    "electron": "^34.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }
