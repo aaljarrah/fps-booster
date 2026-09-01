@@ -1099,6 +1099,30 @@ ipcMain.handle('win:minimize', () => win && win.minimize());
 ipcMain.handle('win:maximize', () => { if (!win) return; win.isMaximized() ? win.unmaximize() : win.maximize(); });
 ipcMain.handle('win:close', () => win && win.close());
 
+/* ---------------- Auto-update (packaged builds only) ----------------
+   Discord-model updates: check on launch, download in the background, install on quit.
+   No dialog interrupts a session — a gamer mid-match must never be asked to restart.
+   electron-updater reads dist/latest.yml from the newest GitHub release (the publish
+   config in electron-builder.config.js) and VERIFIES the downloaded installer's
+   Authenticode signature against win.publisherName before it will ever run it. With the
+   dev certificate that name is the dev CN; swapping to a real certificate swaps the name
+   (docs/signing.md). Update failures are logged, never fatal: a broken feed leaves the
+   installed version running untouched. */
+function setupAutoUpdate() {
+  if (!app.isPackaged) return; // dev runs have no installed version to update
+  let autoUpdater;
+  try { ({ autoUpdater } = require('electron-updater')); }
+  catch (e) { console.error(`[update] electron-updater unavailable: ${(e && e.message) || e}`); return; }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('error', (e) => console.error(`[update] ${(e && e.message) || e}`));
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[update] ${info.version} downloaded; it installs when FrameForge quits.`);
+    if (win && !win.isDestroyed()) { try { win.webContents.send('update:ready', { version: info.version }); } catch (_) {} }
+  });
+  autoUpdater.checkForUpdates().catch((e) => console.error(`[update] check failed: ${(e && e.message) || e}`));
+}
+
 app.whenReady().then(async () => {
   // Both probes are read-only and run BEFORE the first window so the renderer's very
   // first ui:env call already carries a measured answer rather than an assumption.
@@ -1128,6 +1152,7 @@ app.whenReady().then(async () => {
     });
   createWindow();
   createTray();
+  setupAutoUpdate();
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

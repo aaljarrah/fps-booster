@@ -228,7 +228,7 @@
                         "name":  "Threaded Optimization",
                         "settingId":  549528094,
                         "claim":  "Forced Off",
-                        "why":  "POTENTIALLY HARMFUL on a hybrid P+E CPU â€” forcing single-threaded driver work removes free parallelism. Leave Auto."
+                        "why":  "POTENTIALLY HARMFUL on a hybrid P+E CPU — forcing single-threaded driver work removes free parallelism. Leave Auto."
                     },
                     {
                         "name":  "CUDA - Force P2 State",

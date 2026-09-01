@@ -1,0 +1,77 @@
+# Release: push a v* tag → test gate → signed build → GitHub Release with the installer,
+# checksums, and the electron-updater feed (latest.yml + blockmap) that installed copies
+# poll for auto-updates.
+#
+# Signing in CI mirrors docs/signing.md:
+#   secrets FF_CSC_LINK_B64 / FF_CSC_PASSWORD / FF_PUBLISHER_NAME present → real certificate
+#   absent → the build creates a dev certificate on the runner: still a fully signed
+#            artifact, but with an untrusted chain, and the release notes say so.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # A tag that disagrees with package.json publishes a latest.yml carrying the OLD
+      # version — installed copies would silently never auto-update to it.
+      - name: Tag must match package.json version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME -replace '^v',''
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($tag -ne $ver) { throw "Tag v$tag does not match package.json version $ver. Bump package.json (npm version $tag) and re-tag." }
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The same gate a developer runs. A release tag does not get to skip it.
+      - name: Engine test suite
+        run: npm run test:engine
+
+      - name: Materialize signing certificate (if configured)
+        shell: pwsh
+        env:
+          FF_CSC_LINK_B64: ${{ secrets.FF_CSC_LINK_B64 }}
+          FF_CSC_PASSWORD: ${{ secrets.FF_CSC_PASSWORD }}
+          FF_PUBLISHER_NAME: ${{ secrets.FF_PUBLISHER_NAME }}
+        run: |
+          if ($env:FF_CSC_LINK_B64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'release-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:FF_CSC_LINK_B64))
+            "FF_CSC_LINK=$pfx" >> $env:GITHUB_ENV
+            "FF_CSC_PASSWORD=$env:FF_CSC_PASSWORD" >> $env:GITHUB_ENV
+            "FF_PUBLISHER_NAME=$env:FF_PUBLISHER_NAME" >> $env:GITHUB_ENV
+            "FF_SIGNING=production certificate" >> $env:GITHUB_ENV
+          } else {
+            "FF_SIGNING=development certificate (untrusted chain - see docs/signing.md)" >> $env:GITHUB_ENV
+          }
+
+      - name: Build signed installer
+        run: npm run dist
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/FrameForgeSetup.exe
+            dist/FrameForgeSetup.exe.blockmap
+            dist/latest.yml
+            dist/SHA256SUMS.txt
+          body: |
+            **[Download FrameForgeSetup.exe](https://github.com/aaljarrah/fps-booster/releases/latest/download/FrameForgeSetup.exe)** — one click, installs per-user (no admin), launches when done. Installed copies auto-update to future releases on quit.
+
+            Verify your download against `SHA256SUMS.txt`. Signing for this build: ${{ env.FF_SIGNING }}.

@@ -1,0 +1,5 @@
+@@TS@@, Info                  CBS    [SR] Beginning Verify and Repair transaction
+@@TS@@, Info                  CBS    [SR] Verifying 100 (0x0000000000000064) components
+@@TS@@, Info                  CBS    [SR] Cannot repair member file [l:10]'opencl.dll' of Microsoft-Windows-OpenCL, version 10.0.26200.9168, arch amd64, nonSxS, pkt {l:8 b:31bf3856ad364e35}
+@@TS@@, Info                  CBS    [SR] This component was referenced by [l:96]'Microsoft-Windows-Client-Features-Package'
+@@TS@@, Info                  CBS    [SR] Repair complete

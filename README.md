@@ -213,7 +213,23 @@ PowerShell engine; the renderer has no Node access (`contextIsolation`, no `node
 
 ---
 
-## Running it
+## Installing it
+
+Grab **[FrameForgeSetup.exe](https://github.com/aaljarrah/fps-booster/releases/latest/download/FrameForgeSetup.exe)**
+from the latest release and run it. One click: it installs per-user (no admin prompt), puts
+FrameForge in the Start Menu, and launches when it finishes. Installed copies check GitHub on
+launch and update themselves silently when they quit. Uninstall from Windows Settings → Apps;
+your rollback ledger in `%LOCALAPPDATA%\FrameForge` survives both updates and reinstalls.
+
+Every release artifact is Authenticode-signed — installer, app, uninstaller, and each
+PowerShell engine script (which keeps the engines alive under `AllSigned` execution-policy
+GPOs). Verify a download against the `SHA256SUMS.txt` on its release page. Signing details
+and the production-certificate swap: [docs/signing.md](docs/signing.md).
+
+To build the installer yourself: `npm run dist` → `dist/FrameForgeSetup.exe` (signs with a
+local dev certificate unless you provide one).
+
+## Running it from source
 
 ```powershell
 # from the project root
@@ -224,8 +240,6 @@ npm start        # launches FrameForge
 A **FrameForge** shortcut is also in the Start Menu. Many tweaks (HKLM, power plans, services) need
 elevation — launch normally, then click **Restart as administrator** (or **Limited — click to elevate**
 in the sidebar). Frametime capture also requires admin (PresentMon uses ETW).
-
-A portable build is produced in `dist/FrameForge-win32-x64/FrameForge.exe`.
 
 Engine self-tests:
 ```powershell

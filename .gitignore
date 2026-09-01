@@ -6,6 +6,10 @@ dist/
 out/
 *.zip
 
+# Local signing material — the dev certificate is machine-local and never committed;
+# a real certificate arrives via FF_CSC_LINK, never via the repo (docs/signing.md)
+build/certs/
+
 # Runtime state (machine-specific: applied-tweak rollback ledger, cached catalogs)
 data/state/
 
@@ -16,6 +20,9 @@ PresentMon-*.csv
 # Logs
 *.log
 npm-debug.log*
+# …but test fixtures ARE the product: the blanket *.log above silently kept the CBS
+# fixtures out of the repo, so every fresh clone failed the engine test gate.
+!engine/test/fixtures/**/*.log
 
 # OS / editor
 Thumbs.db
