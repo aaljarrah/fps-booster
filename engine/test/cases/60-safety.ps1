@@ -255,6 +255,16 @@ Register-FFTest -Area 'SAFETY' -Doctrine 'rule 2' -Name 'a FAILED probe refuses 
 
 # health.ps1 missing, crashed, or emitting something unparseable all arrive here as $null.
 function Invoke-HealthProbe { param([string]$Category, [switch]$Deep, [switch]$Fresh) $null }
+
+# activation-retry's environment gate (Get-RepairDetection) reads the REAL licence channel
+# BEFORE the probe; on a KMS/volume-licensed machine (e.g. a Windows Server CI runner) it
+# truthfully answers not-applicable and the probe path is never reached. Pin the channel to
+# the retail case so THIS test measures the probe-failure guard, not the runner's licence.
+function Get-FFLicenseState {
+  [ordered]@{ readable = $true; error = $null; rows = @(); keyedRows = 1; primary = $null
+              channel = 'retail'; channelSource = 'product-key-channel'; status = 1
+              statusText = 'Licensed'; product = 'Stubbed Windows (Retail)'; kmsHost = $null
+              primaryChosenBy = 'stub' } }
 '@)) -Test {
     foreach ($rep in @(Load-Catalog)) {
       if ("$($rep.localDetect)" -match '\S') { continue }

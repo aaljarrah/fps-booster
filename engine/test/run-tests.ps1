@@ -58,6 +58,20 @@ Set-StrictMode -Off
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
+# When a PowerShell 7 parent (GitHub Actions' default shell, a pwsh terminal) starts this
+# Windows PowerShell 5.1 process, the child INHERITS pwsh's PSModulePath. 5.1 then resolves
+# built-in modules from PS7's directories, whose Core-only implementations it cannot load -
+# measured on windows-latest: 'Get-FileHash' was "not recognized" because the inherited path
+# shadowed Microsoft.PowerShell.Utility. Reset to 5.1's own defaults; every child process
+# this suite spawns inherits the repaired value.
+if ($PSVersionTable.PSEdition -ne 'Core') {
+  $env:PSModulePath = @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $PSHOME 'Modules')
+  ) -join ';'
+}
+
 . (Join-Path $PSScriptRoot 'lib\harness.ps1')
 
 $ansi = $Host.UI.SupportsVirtualTerminal -and -not $env:NO_COLOR

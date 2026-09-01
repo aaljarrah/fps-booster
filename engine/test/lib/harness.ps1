@@ -150,8 +150,14 @@ function Get-FFRealStateFingerprint {
     $files = @()
     try { $files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction Stop) } catch { $map[$root] = "<unreadable: $($_.Exception.Message)>"; continue }
     foreach ($f in ($files | Sort-Object FullName)) {
-      $h = '<unreadable>'
-      try { $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256 -ErrorAction Stop).Hash } catch {}
+      # The failure reason rides IN the value. A bare '<unreadable>' constant made two hash
+      # failures compare EQUAL, so on a host where Get-FileHash throws (both snapshots), an
+      # in-place rewrite was certified as unchanged - the sabotage case caught the gate
+      # reporting what it never measured. Distinct text per failure keeps that impossible,
+      # and Compare-FFRealStateFingerprint refuses to treat ANY unmeasured pair as equal.
+      $h = $null
+      try { $h = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256 -ErrorAction Stop).Hash }
+      catch { $h = "<unreadable: $($_.Exception.GetType().Name): $($_.Exception.Message)>" }
       $map[$f.FullName] = $h
     }
   }
@@ -170,7 +176,15 @@ function Compare-FFRealStateFingerprint {
   if ($null -eq $before) { return @('the before-fingerprint was never taken') }
   foreach ($k in @($before.Keys)) {
     if (-not $now.Contains($k)) { $diffs += "DELETED  $k"; continue }
-    if ("$($now[$k])" -ne "$($before[$k])") { $diffs += "MODIFIED $k" }
+    $b = "$($before[$k])"; $n = "$($now[$k])"
+    # A hash that could not be taken is not a value that can prove "unchanged". Either side
+    # unmeasured -> its own difference class, so the run fails loudly with the reason instead
+    # of certifying a read-only claim nobody measured.
+    if ($b -like '<unreadable*' -or $n -like '<unreadable*') {
+      $diffs += "UNMEASURED $k - could not hash, so the read-only claim was NOT verified for this file (before: $b; now: $n)"
+      continue
+    }
+    if ($n -ne $b) { $diffs += "MODIFIED $k" }
   }
   foreach ($k in @($now.Keys)) { if (-not $before.Contains($k)) { $diffs += "CREATED  $k" } }
   @($diffs)
@@ -185,6 +199,15 @@ function Initialize-FFWorkDir {
     throw "Work dir already exists, refusing to reuse it: $script:FFWorkDir"
   }
   New-Item -ItemType Directory -Force -Path $script:FFWorkDir | Out-Null
+  # Canary: prove Get-FileHash works on THIS host before anything depends on it. On a host
+  # where hashing throws (FIPS policy, broken CSP), the read-only gate cannot measure anything,
+  # so the run refuses up front with the real exception instead of 40 minutes later with a
+  # cryptic diff.
+  $canary = Join-Path $script:FFWorkDir 'hash-canary.txt'
+  [System.IO.File]::WriteAllText($canary, 'canary')
+  try { $null = (Get-FileHash -LiteralPath $canary -Algorithm SHA256 -ErrorAction Stop).Hash }
+  catch { throw "Get-FileHash SHA256 does not work on this host ($($_.Exception.GetType().Name): $($_.Exception.Message)). The read-only gate cannot verify anything here, so the suite refuses to run rather than certify what it cannot measure." }
+  Remove-Item -LiteralPath $canary -Force -ErrorAction SilentlyContinue
   # The fingerprint is taken BEFORE the redirect, against the real paths, so the comparison at
   # the end of the run is against the machine as it actually was.
   $script:FFRealStateBefore = Get-FFRealStateFingerprint
@@ -1041,8 +1064,28 @@ function ConvertFrom-FFEngineStdout {
     $out.error = "stdout did not parse as exactly one JSON document: $($_.Exception.Message)"
     # Distinguish "two documents" from "not JSON at all", because they are different bugs.
     if ($trimmed -match '(?s)\}\s*\{') { $out.docCount = 2; $out.error = "stdout carried MORE THAN ONE JSON document (the host parses exactly one): $($_.Exception.Message)" }
+    # Report what was MEASURED, not just that parsing failed: a bounded, escaped excerpt of
+    # the real bytes. A CI failure that discards the polluted stdout can only ever be
+    # diagnosed by hypothesis - this line is what turns the next such failure into evidence.
+    $out.error += " | stdout head/tail: $(ConvertTo-FFPrintableExcerpt $trimmed)"
   }
   $out
+}
+
+function ConvertTo-FFPrintableExcerpt {
+  <# First/last 200 chars of a string with control characters escaped as \xNN, so a
+     parse-failure message can carry the actual bytes without wrecking the log. #>
+  param([string]$Text)
+  if ($null -eq $Text) { return '<null>' }
+  $esc = {
+    param($s)
+    ($s.ToCharArray() | ForEach-Object {
+      $c = [int]$_
+      if ($c -lt 0x20 -or $c -eq 0x7F) { '\x{0:X2}' -f $c } else { [string]$_ }
+    }) -join ''
+  }
+  if ($Text.Length -le 400) { return (& $esc $Text) }
+  "$(& $esc $Text.Substring(0, 200)) ... [$($Text.Length) chars total] ... $(& $esc $Text.Substring($Text.Length - 200))"
 }
 
 function Assert-FFOneJsonDoc {

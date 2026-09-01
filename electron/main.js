@@ -11,6 +11,21 @@ const PS = process.env.SystemRoot
   ? path.join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : 'powershell.exe';
 
+/* A PowerShell 7 parent (a pwsh terminal, a CI shell) leaks ITS PSModulePath into the
+   environment, and a Windows PowerShell 5.1 child then resolves built-in modules from PS7's
+   Core-only directories — losing its own cmdlets entirely (measured on windows-latest:
+   'Get-FileHash' was "not recognized" under an inherited pwsh PSModulePath). FrameForge can
+   be launched from any shell, so every powershell.exe this file spawns gets 5.1's own
+   default module path instead of whatever the launcher happened to carry. */
+function psEnv() {
+  const modulePath = [
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'Documents', 'WindowsPowerShell', 'Modules') : null,
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'WindowsPowerShell', 'Modules'),
+    path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules'),
+  ].filter(Boolean).join(';');
+  return { ...process.env, PSModulePath: modulePath };
+}
+
 // Solid Fluent grounds. These are the SolidBackgroundFillColorBase values the renderer
 // paints; the native window uses the same pair so a repaint-before-first-frame, a
 // dropped Mica backdrop, or a resize never shows an unpainted (black) window.
@@ -99,7 +114,7 @@ function detectExecutionPolicy() {
   return new Promise((resolve) => {
     psPolicy.motw = engineHasMotw();
     const cmd = 'Get-ExecutionPolicy -List | ForEach-Object { [pscustomobject]@{ Scope = [string]$_.Scope; Policy = [string]$_.ExecutionPolicy } } | ConvertTo-Json -Compress';
-    execFile(PS, ['-NoProfile', '-Command', cmd], { windowsHide: true, timeout: 20000 }, (err, out) => {
+    execFile(PS, ['-NoProfile', '-Command', cmd], { windowsHide: true, timeout: 20000, env: psEnv() }, (err, out) => {
       psPolicy.checked = true;
       if (err || !String(out || '').trim()) {
         // Could not determine. Say so — do not silently claim the policy is fine.
@@ -151,8 +166,14 @@ const RE_PSCOMMANDPATH = String.raw`\$\{?PSCommandPath\}?\b`;
 
 /** argv for one engine call in an explicit mode. `psArgsFor` uses the app's current mode. */
 function psArgsForMode(mode, script, args) {
+  // -NonInteractive on BOTH shapes: this host drives engines through execFile and can never
+  // answer a prompt. Without it, PowerShell may attempt a host interaction (measured: the
+  // untrusted-publisher prompt during DISM/BitLocker module autoload under an AllSigned
+  // policy — precisely the condition scriptblock mode exists for) and the prompt's rendering
+  // lands in STDOUT, corrupting the one-JSON-document contract. Non-interactive, the same
+  // condition becomes a terminating error the engines already catch and report by name.
   if (mode !== 'scriptblock') {
-    return ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args];
+    return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, ...args];
   }
   // Parameter NAMES pass through bare; everything else is a quoted literal, so a
   // renderer-supplied value can never become a switch.
@@ -222,7 +243,7 @@ function psArgsForMode(mode, script, args) {
     // Verified by engine/test/cases/56-policy.ps1, which drives THIS function's output.
     `. ([scriptblock]::Create($ffSrc)) ${argExpr}`,
   ];
-  return ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', parts.join('; ')];
+  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', parts.join('; ')];
 }
 
 function psArgsFor(script, args) {
@@ -274,7 +295,7 @@ function rawEngineCall(mode, scriptName, args, timeout) {
   return new Promise((resolve) => {
     const script = path.join(ENGINE, scriptName);
     execFile(PS, psArgsForMode(mode, script, args),
-      { maxBuffer: 4 * 1024 * 1024, windowsHide: true, timeout }, (err, stdout, stderr) => {
+      { maxBuffer: 4 * 1024 * 1024, windowsHide: true, timeout, env: psEnv() }, (err, stdout, stderr) => {
         const raw = String(stdout || '').trim();
         let json = null;
         try { json = JSON.parse(raw); } catch (e) { json = null; }
@@ -359,7 +380,7 @@ function runPsNow(scriptName, args, { timeout = 60000 } = {}) {
     // can be killed. execFile only signals powershell.exe; a native grandchild
     // (sfc.exe / Dism.exe / cscript.exe) would survive and keep mutating the system
     // unsupervised while the UI reported a plain failure.
-    const child = execFile(PS, full, { maxBuffer: 1024 * 1024 * 16, windowsHide: true },
+    const child = execFile(PS, full, { maxBuffer: 1024 * 1024 * 16, windowsHide: true, env: psEnv() },
       (err, stdout, stderr) => {
         if (timer) clearTimeout(timer);
         const raw = (stdout || '').trim();
@@ -448,7 +469,7 @@ function currentUserSid() {
   return new Promise((resolve) => {
     execFile(PS, ['-NoProfile', '-Command',
       '([Security.Principal.WindowsIdentity]::GetCurrent()).User.Value'],
-      { windowsHide: true, timeout: 15000 }, (e, out) => {
+      { windowsHide: true, timeout: 15000, env: psEnv() }, (e, out) => {
         const s = String(out || '').trim();
         resolve(!e && SID_RE.test(s) ? s : null);
       });
@@ -473,7 +494,7 @@ function isElevated() {
     // safe default and the UI has a complete non-admin path.
     execFile(PS, ['-NoProfile', '-Command',
       '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)'],
-      { windowsHide: true, timeout: 15000 }, (e, out) => {
+      { windowsHide: true, timeout: 15000, env: psEnv() }, (e, out) => {
         if (e) { resolve(false); return; }
         // Exact match. A stray banner line containing the word "true" must not promote
         // the user to administrator in the UI. (Boolean.ToString() is culture-invariant,
@@ -509,7 +530,7 @@ async function relaunchElevated() {
     const cmd = `try { ${start}; exit 0 } catch { ` +
       `$c = $_.Exception; while ($c -and -not ($c.PSObject.Properties['NativeErrorCode'])) { $c = $c.InnerException }; ` +
       `if ($c -and $c.NativeErrorCode -eq 1223) { exit 1223 }; Write-Error $_.Exception.Message; exit 1 }`;
-    execFile(PS, ['-NoProfile', '-Command', cmd], { windowsHide: true, timeout: 120000 }, (err, _o, stderr) => {
+    execFile(PS, ['-NoProfile', '-Command', cmd], { windowsHide: true, timeout: 120000, env: psEnv() }, (err, _o, stderr) => {
       if (!err) {
         // The elevated instance is up; only now is it safe to close this one.
         setTimeout(() => app.quit(), 400);
