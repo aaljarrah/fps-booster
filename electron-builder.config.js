@@ -48,6 +48,7 @@ module.exports = {
     '!data/state/**',
     'resources/**/*',
     'package.json',
+    '!**/*.map',        // sourcemaps in the updater's node_modules — ~1 MB a user never needs
   ],
   afterPack: path.join(__dirname, 'build', 'afterPack.js'),
   win: {

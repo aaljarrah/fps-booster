@@ -215,8 +215,9 @@ PowerShell engine; the renderer has no Node access (`contextIsolation`, no `node
 
 ## Installing it
 
-Grab **[FrameForgeSetup.exe](https://github.com/aaljarrah/fps-booster/releases/latest/download/FrameForgeSetup.exe)**
-from the latest release and run it. One click: it installs per-user (no admin prompt), puts
+Download page: **https://aaljarrah.github.io/fps-booster/** — or grab
+**[FrameForgeSetup.exe](https://github.com/aaljarrah/fps-booster/releases/latest/download/FrameForgeSetup.exe)**
+straight from the latest release and run it. One click: it installs per-user (no admin prompt), puts
 FrameForge in the Start Menu, and launches when it finishes. Installed copies check GitHub on
 launch and update themselves silently when they quit. Uninstall from Windows Settings → Apps;
 your rollback ledger in `%LOCALAPPDATA%\FrameForge` survives both updates and reinstalls.

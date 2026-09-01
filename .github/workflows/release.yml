@@ -72,6 +72,6 @@ jobs:
             dist/latest.yml
             dist/SHA256SUMS.txt
           body: |
-            **[Download FrameForgeSetup.exe](https://github.com/aaljarrah/fps-booster/releases/latest/download/FrameForgeSetup.exe)** — one click, installs per-user (no admin), launches when done. Installed copies auto-update to future releases on quit.
+            **[Download FrameForgeSetup.exe](https://github.com/aaljarrah/fps-booster/releases/latest/download/FrameForgeSetup.exe)** — one click, installs per-user (no admin), launches when done. Installed copies auto-update to future releases on quit. More at the [download page](https://aaljarrah.github.io/fps-booster/).
 
             Verify your download against `SHA256SUMS.txt`. Signing for this build: ${{ env.FF_SIGNING }}.

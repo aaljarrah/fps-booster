@@ -526,9 +526,13 @@ function renderDashboard() {
   const inPlace = actions.filter((t) => isApplied(t.id) === true).length;
   const counted = actions.filter((t) => isApplied(t.id) !== null).length;
   const scoreText = score === null ? '&ndash;' : String(score);
+  // The number is impact-WEIGHTED (computeScore), so it can differ from the raw count —
+  // say so, or "65" next to "6 of 9" reads as a math error. Grammar follows the count.
+  // (NB: `unchecked` is taken further down in this function.)
+  const uncounted = actions.length - counted;
   const scoreDesc = state.detectFailed
     ? 'Optimization state could not be read on this PC, so nothing is scored.'
-    : `${inPlace} of ${counted} optimizations in place, counted only from checks we can verify on this PC${counted < actions.length ? ` (${actions.length - counted} could not be checked and are not counted)` : ''}`;
+    : `${inPlace} of ${counted} optimizations in place, weighted by impact and counted only from checks we can verify on this PC${uncounted ? ` (${uncounted} could not be checked and ${uncounted === 1 ? 'is' : 'are'} not counted)` : ''}`;
   const specLine = [
     os.caption ? esc(os.caption) : 'Windows edition unknown',
     os.build ? `build ${esc(os.build)}` : null,
