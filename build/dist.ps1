@@ -9,6 +9,20 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
+# A PowerShell 7 parent (CI's pwsh shell, a pwsh terminal) leaks its PSModulePath into this
+# Windows PowerShell 5.1 process, which then cannot load its own built-in modules - measured
+# on windows-latest: New-SelfSignedCertificate failed with "Cannot find drive 'Cert'" because
+# Microsoft.PowerShell.Security could not load. Reset to 5.1's defaults; every child this
+# script starts (ensure-dev-cert, electron-builder's afterPack signing hooks) inherits it.
+# Same repair as engine/test/run-tests.ps1 and electron/main.js psEnv().
+if ($PSVersionTable.PSEdition -ne 'Core') {
+  $env:PSModulePath = @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'WindowsPowerShell\Modules'),
+    (Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'),
+    (Join-Path $PSHOME 'Modules')
+  ) -join ';'
+}
+
 # 1. Icon (deterministic; regenerated only if missing).
 $icon = Join-Path $PSScriptRoot 'icon.png'
 if (-not (Test-Path -LiteralPath $icon)) {
