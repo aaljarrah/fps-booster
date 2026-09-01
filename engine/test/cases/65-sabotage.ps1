@@ -144,6 +144,16 @@ function Assert-FFFailedProbeRefuses {
       $FFMutationGuards.ToString() + @'
 
 function Invoke-HealthProbe { param([string]$Category, [switch]$Deep, [switch]$Fresh) $null }
+
+# Same licence-channel pin as the SAFETY case of the same name: on a KMS/volume-licensed
+# host (Windows Server CI runner), activation-retry's environment gate truthfully answers
+# not-applicable before the probe is consulted, and this assertion would measure the
+# runner's licence instead of the probe-failure guard.
+function Get-FFLicenseState {
+  [ordered]@{ readable = $true; error = $null; rows = @(); keyedRows = 1; primary = $null
+              channel = 'retail'; channelSource = 'product-key-channel'; status = 1
+              statusText = 'Licensed'; product = 'Stubbed Windows (Retail)'; kmsHost = $null
+              primaryChosenBy = 'stub' } }
 '@)) -Test {
     foreach ($rep in @(Load-Catalog)) {
       if ("$($rep.localDetect)" -match '\S') { continue }

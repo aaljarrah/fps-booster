@@ -1802,7 +1802,18 @@ if (-not $IndexValid -or $IndexValue -lt 0) { $IndexValid = $false }
 # Setup handoff is not a decision to make in a bug-fix round.
 $OsSupport = Get-FFOsInfo
 $PlatformGatedActions = @('acquire-url','preflight','launch')
-$platformRefused = (($PlatformGatedActions -contains $Action) -and (-not $OsSupport.supported))
+# The gate refuses only invocations that would actually EXECUTE something (same shape as
+# repair.ps1's -Force/-DryRun pattern). Without the consent switch these actions are
+# read-only consent-contract queries, and answering them is doctrine: on an unsupported
+# platform the contract must still be returned - with the refusal named in its blockers
+# below - instead of exiting 3 before the document exists. Launching itself stays refused.
+$WouldExecute = $false
+switch ($Action) {
+  'acquire-url' { $WouldExecute = ([bool]$ConsentRunFido -and -not $DryRun) }
+  'preflight'   { $WouldExecute = ([bool]$AcceptEula     -and -not $DryRun) }
+  'launch'      { $WouldExecute = ([bool]$Confirm        -and -not $DryRun) }
+}
+$platformRefused = (($PlatformGatedActions -contains $Action) -and $WouldExecute -and (-not $OsSupport.supported))
 
 if ($ValidActions -notcontains $Action) {
   $out = [ordered]@{ ok = $false; action = "$Action"; errorCode = 'unknown-action'; error = "Unknown action '$Action'."; validActions = $ValidActions }
@@ -2517,6 +2528,9 @@ switch ($Action) {
         elseif (-not $lVerdict.compatible) { $blockers += 'Media failed the matching rules (see verdict.reasons).' }
         $blockers += @($railCheck.reasons)
         if (-not $IsAdmin) { $blockers += 'Administrator rights are required to launch.' }
+        # The read-only answer must never imply a launch is available on a platform where
+        # launching would be refused (doctrine rule 2).
+        if (-not $OsSupport.supported) { $blockers += "Unsupported platform - launching would be REFUSED with errorCode 'unsupported-os': $($OsSupport.unsupportedReason)" }
         $out = [ordered]@{
           ok = $true; action = 'launch'; mode = 'consent-contract'
           executed = $false

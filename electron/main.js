@@ -151,8 +151,14 @@ const RE_PSCOMMANDPATH = String.raw`\$\{?PSCommandPath\}?\b`;
 
 /** argv for one engine call in an explicit mode. `psArgsFor` uses the app's current mode. */
 function psArgsForMode(mode, script, args) {
+  // -NonInteractive on BOTH shapes: this host drives engines through execFile and can never
+  // answer a prompt. Without it, PowerShell may attempt a host interaction (measured: the
+  // untrusted-publisher prompt during DISM/BitLocker module autoload under an AllSigned
+  // policy — precisely the condition scriptblock mode exists for) and the prompt's rendering
+  // lands in STDOUT, corrupting the one-JSON-document contract. Non-interactive, the same
+  // condition becomes a terminating error the engines already catch and report by name.
   if (mode !== 'scriptblock') {
-    return ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args];
+    return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, ...args];
   }
   // Parameter NAMES pass through bare; everything else is a quoted literal, so a
   // renderer-supplied value can never become a switch.
@@ -222,7 +228,7 @@ function psArgsForMode(mode, script, args) {
     // Verified by engine/test/cases/56-policy.ps1, which drives THIS function's output.
     `. ([scriptblock]::Create($ffSrc)) ${argExpr}`,
   ];
-  return ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', parts.join('; ')];
+  return ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', parts.join('; ')];
 }
 
 function psArgsFor(script, args) {

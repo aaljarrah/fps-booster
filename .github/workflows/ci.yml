@@ -1,0 +1,24 @@
+# The engine test gate, on every PR and main push — the same suite release.yml runs on tags.
+# It exists so a Server-runner-only failure (KMS licence, hardened crypto, missing client
+# services) surfaces on the PR, not on the release tag.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  engine-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Engine test suite
+        run: npm run test:engine
